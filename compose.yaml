@@ -5,13 +5,13 @@ services:
     restart: unless-stopped
     init: true
     ports:
-      - "${INVITES_PORT:-30112}:8080"
+      - "${INVITES_PORT:-30012}:8080"
     environment:
       INVITES_PASSWORD: "${INVITES_PASSWORD:?Set the pilot password in .env}"
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:?Set the HTTPS address in .env}"
     volumes:
       - type: bind
-        source: "${INVITES_DATA_PATH:-./data}"
+        source: "${INVITES_DATA_PATH:?Set the client-data dataset path in .env}"
         target: /data
         bind:
           create_host_path: false

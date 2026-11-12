@@ -4,30 +4,47 @@ The pilot includes two interactive public demos and a password-protected organis
 
 ## Run on TrueNAS
 
-1. Extract the archive into your apps dataset, for example `/mnt/apps/ivory-invites`. Open the TrueNAS shell as a user with permission to run Docker and set ownership on the data directory.
-2. From the extracted folder, create the data directory and copy the example settings.
+| Purpose | TrueNAS path |
+| --- | --- |
+| Git checkout and local deployment settings | `/mnt/apps/invites-ivorydigital` |
+| SQLite database, uploaded photos and RSVP replies | `/mnt/photographers_data/invites-ivoryclient` |
+
+1. In the TrueNAS shell, clone the private repository into the existing app dataset. This command expects the app dataset to be empty. If it already contains this checkout, run `git pull --ff-only` from that directory.
 
    ```sh
-   cd /mnt/apps/ivory-invites
-   install -d -m 0750 -o 10001 -g 10001 data
+   git clone https://github.com/valianktni1/ivory-invites.git /mnt/apps/invites-ivorydigital
+   cd /mnt/apps/invites-ivorydigital
+   ```
+
+2. Give the container's UID and GID `10001:10001` write access to the client-data dataset. For a new, empty dataset with standard Unix permissions, run the following as root.
+
+   ```sh
+   test -d /mnt/photographers_data/invites-ivoryclient &&
+     chown 10001:10001 /mnt/photographers_data/invites-ivoryclient
+   ```
+
+3. Copy the example settings if this is a fresh install. The example contains the public URL, port `30012` and the separate client-data path.
+
+   ```sh
    cp -n .env.example .env
    chmod 600 .env
    ```
 
-3. Edit `.env`. Set a strong, unique password of at least 16 characters. Use a password manager or generate a random value with `openssl rand -hex 24`. Port `30112` is the proposed host port. If it is occupied, choose a free port and use the same one in the proxy settings. To store data on a separate dataset, set `INVITES_DATA_PATH` to its absolute path and give UID/GID `10001:10001` write access there.
-4. Start the app and check its status.
+   Edit `.env` and set a strong, unique `INVITES_PASSWORD` of at least 16 characters. On an existing checkout, check that `INVITES_PORT=30012`, `PUBLIC_ORIGIN=https://invites.ivorydigital.uk` and `INVITES_DATA_PATH=/mnt/photographers_data/invites-ivoryclient` are set in `.env`. If an earlier pilot already has data, stop it and copy its database files into the new dataset before switching the mount. Keep the original copy until you verify the data in the app.
+
+4. Validate the configuration, build the app and check that the container starts.
 
    ```sh
-   docker compose up -d --build
-   docker compose ps
+   docker compose config --quiet &&
+     docker compose up -d --build &&
+     docker compose ps
    ```
 
-5. In DNS, point `invites.ivorydigital.uk` at the same public proxy as the other Ivory apps. In Nginx Proxy Manager, add a proxy host for that name with scheme HTTP, forwarding to the TrueNAS LAN address and the host port from `.env`. Use an HTTPS certificate for the public address and enable Force SSL. Keep that address in `PUBLIC_ORIGIN`.
-6. Open the public address to try the demos. Open `/editor` to sign in and create a test event. Use made-up guest details for the pilot. After a guest replies, reopen the event or refresh and select it to see the reply.
+5. The existing Nginx Proxy Manager host for `invites.ivorydigital.uk` should forward HTTP to the TrueNAS LAN address on port `30012` and serve HTTPS to visitors. Check `https://invites.ivorydigital.uk/health` for a successful response, then visit `/editor` to create a test event. After a guest replies, reopen the event or refresh and select it to see the reply.
 
 The app currently uses a single organiser password. Each generated household link can be opened and used to RSVP by whoever holds the link. Send each link to the intended household. Demo replies are discarded. Payment, the wedding planner connection and the occasion landing pages are separate milestones.
 
-To back up, stop the app with `docker compose stop`, copy the data directory to your backup location, then run `docker compose start`. Uploaded photos are inside the same database. The database and data directory should have the same permissions after a restore.
+To back up, stop the app with `docker compose stop`, copy `/mnt/photographers_data/invites-ivoryclient` to your backup location, then run `docker compose start`. Uploaded photos are inside the same database. The database and data directory should have the same permissions after a restore.
 
 ## Run locally for development
 
