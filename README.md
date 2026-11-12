@@ -32,35 +32,24 @@ The pilot includes two interactive public demos and a workspace for each organis
 
    On an existing checkout, keep the current `.env` with your public URL, port and client-data path. You can remove the old `INVITES_PASSWORD` line. Existing pilot invitations will be linked to the verified `INVITES_OWNER_EMAIL` account when it is created. The default is `admin@ivorydigital.uk`. Existing guest links and replies are carried over.
 
-4. From the app directory, run the following as root. When prompted, enter the mailbox password for `admin@ivorydigital.uk`. The shell hides what you type. The app defaults to Hostinger SMTP with implicit TLS on port `465`. If you use a different mail provider with implicit TLS, set `INVITES_SMTP_HOST` and `INVITES_SMTP_PORT` in `.env`.
+4. Create the app's private settings directory and start the container as root.
 
    ```sh
-   bash -c '
-   set -eu
-   umask 077
-   read -r -s -p "Mailbox password for admin@ivorydigital.uk: " password
-   printf "\n"
-   test -n "$password"
-   temp=$(mktemp .smtp-password.XXXXXX)
-   cleanup() { rm -f -- "$temp"; }
-   trap cleanup EXIT
-   printf "%s\n" "$password" > "$temp"
-   unset password
-   chown 10001:10001 "$temp"
-   chmod 0400 "$temp"
-   mv -f -- "$temp" .smtp-password
-   '
-   ```
-
-5. Validate the configuration, build the app and check that the container starts.
-
-   ```sh
+   install -d -m 0700 -o 10001 -g 10001 .settings
    docker compose config --quiet &&
      docker compose up -d --build &&
      docker compose ps
    ```
 
-6. The existing Nginx Proxy Manager host for `invites.ivorydigital.uk` should forward HTTP to the TrueNAS LAN address on port `30012` and serve HTTPS to visitors. At `/editor`, choose **Set up the owner account** if you have not set up the owner login. Open the email link, enter the same email address and choose a password with at least eight characters and one special character.
+5. The existing Nginx Proxy Manager host for `invites.ivorydigital.uk` should forward HTTP to the TrueNAS LAN address on port `30012` and serve HTTPS to visitors. If you already have an owner login, sign in and open **Admin → SMTP settings**. For first-time setup or mail recovery, generate a one-time code on TrueNAS:
+
+   ```sh
+   docker compose exec -T invites python app.py mail-setup-code
+   ```
+
+   Open [SMTP setup](https://invites.ivorydigital.uk/admin/mail-setup), paste the code and enter your mailbox details. The code expires after 20 minutes or after a successful save. The form starts with the Hostinger SMTP server, SSL/TLS and port 465. Select **Verify and save**. SMTP settings are stored in the app dataset under `.settings`; the older `.smtp-password` file is no longer used.
+
+6. At `/editor`, choose **Set up the owner account** if you have yet to create the owner login. Open the email link, enter the same email address and choose a password with at least eight characters and one special character.
 
 ## Invite and manage customers
 
@@ -84,4 +73,4 @@ Use Python 3.11 or newer with the system's time-zone database installed.
 python3 app.py
 ```
 
-Open `http://localhost:30112`. To enable account emails, set `INVITES_SMTP_PASSWORD_FILE` to a local file containing the sender mailbox password.
+Open `http://localhost:30112`. For local mail setup, use `python3 app.py mail-setup-code` and open `/admin/mail-setup`.

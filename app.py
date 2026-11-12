@@ -5,6 +5,7 @@ import re
 import secrets
 import smtplib
 import sqlite3
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -16,6 +17,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import accounts
+import mail_settings
 
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("INVITES_DATA", ROOT / "data"))
@@ -35,7 +37,8 @@ TEMPLATES = {
 }
 STATIC_TYPES = {"app.css": "text/css; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
                 "wedding.webp": "image/webp", "birthday.webp": "image/webp"}
-HOST_PAGES = {"/", "/editor", "/admin", "/account/signup", "/account/setup", "/account/forgot", "/account/reset"}
+HOST_PAGES = {"/", "/editor", "/admin", "/admin/mail", "/admin/mail-setup",
+              "/account/signup", "/account/setup", "/account/forgot", "/account/reset"}
 UK = ZoneInfo("Europe/London")
 
 
@@ -259,8 +262,8 @@ class Handler(BaseHTTPRequestHandler):
             if path.endswith("/signup") and email != accounts.OWNER_EMAIL:
                 self.json({"ok": True}, 202)
                 return
-            if not accounts.SMTP_PASSWORD:
-                raise ClientError("Account email is temporarily unavailable.", 503)
+            if not mail_settings.public_config()["configured"]:
+                raise ClientError("Account email has not been configured.", 503)
             accounts.limit("mail", email)
             if not MAIL_SLOTS.acquire(blocking=False):
                 raise ClientError("Account email is busy. Try again shortly.", 503)
@@ -292,8 +295,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/admin/access":
                 accounts.change_access(connection, email, access)
             else:
-                if not accounts.SMTP_PASSWORD:
-                    raise ClientError("Account email is temporarily unavailable.", 503)
+                if not mail_settings.public_config()["configured"]:
+                    raise ClientError("Set up SMTP in Admin before sending a setup link.", 503)
                 token = accounts.prepare_customer(connection, email, access)
         if path == "/api/admin/access":
             self.json({"ok": True})
@@ -321,7 +324,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_route(path, self.read_json())
             else:
                 self.read_route(path)
-        except (ClientError, accounts.AccountError) as error:
+        except (ClientError, accounts.AccountError, mail_settings.MailSettingsError) as error:
             self.json({"error": error.message}, error.status)
         except (BrokenPipeError, ConnectionResetError):
             return
@@ -376,6 +379,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.require_admin(connection, account_id)
                 self.json(accounts.customers(connection))
                 return
+            if path == "/api/admin/mail":
+                self.require_admin(connection, account_id)
+                self.json(mail_settings.public_config())
+                return
             if path == "/api/events":
                 rows = connection.execute("SELECT id, details FROM events WHERE account_id = ? ORDER BY rowid DESC",
                                           (account_id,))
@@ -418,6 +425,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path in {"/api/admin/invite", "/api/admin/access"}:
             self.admin_action(path, data)
+            return
+        if path in {"/api/admin/mail", "/api/admin/mail/setup"}:
+            bootstrap = path.endswith("/setup")
+            if bootstrap:
+                accounts.limit("mail-setup", "setup")
+            else:
+                with db() as connection:
+                    self.require_admin(connection, self.require_host(connection))
+            mail_settings.configure(data, bootstrap=bootstrap)
+            self.json({"ok": True})
             return
         match = re.fullmatch(fr"/api/guest/({TOKEN}|wedding|birthday)", path)
         if match:
@@ -470,5 +487,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    os.umask(0o077)
+    mail_settings.setup()
+    if sys.argv[1:] == ["mail-setup-code"]:
+        print(mail_settings.new_code())
+        sys.exit(0)
     setup()
     ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "30112"))), Handler).serve_forever()

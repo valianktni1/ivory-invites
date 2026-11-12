@@ -6,27 +6,21 @@ import re
 import secrets
 import smtplib
 import sqlite3
-import ssl
 import threading
 import time
 from collections import deque
 from email.message import EmailMessage
-from pathlib import Path
+import mail_settings
 
-SENDER = "admin@ivorydigital.uk"
+SENDER = mail_settings.DEFAULT_USER
 OWNER_EMAIL = os.environ.get("INVITES_OWNER_EMAIL", SENDER).strip().lower()
-SMTP_HOST = os.environ.get("INVITES_SMTP_HOST", "smtp.hostinger.com")
-SMTP_PORT = int(os.environ.get("INVITES_SMTP_PORT", "465"))
-SMTP_PASSWORD_FILE = os.environ.get("INVITES_SMTP_PASSWORD_FILE")
-SMTP_PASSWORD = (Path(SMTP_PASSWORD_FILE).read_text().removesuffix("\n") if SMTP_PASSWORD_FILE
-                 else os.environ.get("INVITES_SMTP_PASSWORD", ""))
 SESSION_AGE = 12 * 60 * 60
 LINK_AGE = 30 * 60
 TOKEN = r"[A-Za-z0-9_-]{43}"
 EMAIL = r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+"
 LIMIT_LOCK = threading.Lock()
 HASH_SLOTS = threading.BoundedSemaphore(3)
-LIMITS = {"login": (8, 120), "mail": (2, 24), "setup": (10, 60)}
+LIMITS = {"login": (8, 120), "mail": (2, 24), "setup": (10, 60), "mail-setup": (8, 8)}
 ATTEMPTS = {name: deque() for name in LIMITS}
 ACCESS = ("free", "trial", "paid")
 
@@ -251,8 +245,7 @@ def send_link(email, purpose, token, origin):
                         f"{origin}{path}#{token}\n\n"
                         "The link is single-use and expires in 30 minutes. "
                         "If you did not request it, you can ignore this email.")
-    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10, context=ssl.create_default_context()) as mail:
-        mail.login(SENDER, SMTP_PASSWORD)
+    with mail_settings.connected(mail_settings.credentials()) as mail:
         mail.send_message(message)
 
 

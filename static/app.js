@@ -112,8 +112,7 @@ function showLogin(message = '') {
   wire(form, async (data) => {
     await api('/api/login', {email: data.get('email'), password: data.get('password')});
     session = await api('/api/session');
-    if (location.pathname === '/admin') await adminPage();
-    else await organiserView();
+    await signedInPage(location.pathname);
   });
 }
 
@@ -198,7 +197,7 @@ async function adminPage(message = '') {
   const customers = await api('/api/admin/customers');
   const page = el('section', undefined, 'organiser-page admin-page');
   const heading = el('div', undefined, 'organiser-heading');
-  heading.append(el('h1', 'Customer access'));
+  heading.append(el('h1', 'Customer access'), link('SMTP settings', '/admin/mail', 'button secondary'));
   const status = el('p', message, 'status');
   status.setAttribute('role', 'status');
   heading.append(status);
@@ -258,6 +257,56 @@ async function adminPage(message = '') {
   }
   page.append(heading, invite, list);
   app.replaceChildren(organiserHeader(), page);
+}
+
+async function mailSettingsPage(bootstrap = false) {
+  if (!bootstrap && !session.admin) {
+    await adminPage();
+    return;
+  }
+  const config = bootstrap
+    ? {host: 'smtp.hostinger.com', port: 465, username: 'admin@ivorydigital.uk', encryption: 'ssl'}
+    : await api('/api/admin/mail');
+  const box = el('section', undefined, 'panel login');
+  box.innerHTML = `
+    <h1>SMTP settings</h1>
+    <p>Ivory Invites sends account emails from admin@ivorydigital.uk.</p>
+    <form>
+      ${bootstrap ? '<label>One-time setup code<input name="code" required maxlength="32" autocomplete="off" spellcheck="false"></label>' : ''}
+      <label>SMTP server<input name="host" required maxlength="253" autocomplete="off" spellcheck="false"></label>
+      <label>Port<input name="port" type="number" min="1" max="65535" required></label>
+      <label>Encryption<select name="encryption"><option value="ssl">SSL/TLS</option><option value="starttls">STARTTLS</option></select></label>
+      <label>SMTP username<input name="username" required maxlength="254" autocomplete="username"></label>
+      <label>Mailbox password<input name="password" type="password" required maxlength="512" autocomplete="off"></label>
+      <button class="button" type="submit">Verify and save</button>
+      <p class="status" role="status"></p>
+    </form>`;
+  const form = box.querySelector('form');
+  for (const name of ['host', 'port', 'encryption', 'username']) form.elements[name].value = config[name];
+  if (!bootstrap && config.configured) {
+    alert(form, 'SMTP is configured. Enter your mailbox password to save any changes.');
+  }
+  const next = link('Go to organiser sign-in', '/editor', 'button secondary');
+  next.hidden = true;
+  if (bootstrap) box.append(next);
+  app.replaceChildren(bootstrap ? header('Organiser sign in', '/editor') : organiserHeader(), box);
+  wire(form, async (fields) => {
+    const data = Object.fromEntries(fields);
+    data.port = Number(data.port);
+    await api('/api/admin/mail' + (bootstrap ? '/setup' : ''), data);
+    form.elements.password.value = '';
+    if (bootstrap) {
+      form.elements.code.value = '';
+      next.hidden = false;
+    }
+    alert(form, 'SMTP verified and saved.');
+  });
+}
+
+async function signedInPage(path) {
+  if (path === '/admin/mail') await mailSettingsPage();
+  else if (path === '/admin') await adminPage();
+  else await organiserView();
 }
 
 function invitationUrl(id) {
@@ -662,10 +711,11 @@ async function start() {
       await guestView(path.split('/')[2]);
     } else if (path.startsWith('/account/')) {
       accountPage(path);
-    } else if (path === '/editor' || path === '/admin') {
+    } else if (path === '/admin/mail-setup') {
+      await mailSettingsPage(true);
+    } else if (path === '/editor' || path === '/admin' || path === '/admin/mail') {
       session = await api('/api/session');
-      if (session.signedIn && path === '/admin') await adminPage();
-      else if (session.signedIn) await organiserView();
+      if (session.signedIn) await signedInPage(path);
       else showLogin();
     } else {
       home();

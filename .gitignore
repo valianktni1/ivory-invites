@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 .smtp-password*
+/.settings/
 /data/
 __pycache__/
 *.py[cod]

@@ -1,5 +1,6 @@
 .env*
 .smtp-password*
+.settings
 data
 __pycache__
 *.zip

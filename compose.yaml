@@ -11,13 +11,16 @@ services:
       INVITES_OWNER_EMAIL: "${INVITES_OWNER_EMAIL:-admin@ivorydigital.uk}"
       INVITES_SMTP_HOST: "${INVITES_SMTP_HOST:-smtp.hostinger.com}"
       INVITES_SMTP_PORT: "${INVITES_SMTP_PORT:-465}"
-      INVITES_SMTP_PASSWORD_FILE: /run/secrets/invites_smtp_password
-    secrets:
-      - invites_smtp_password
+      INVITES_SETTINGS: /settings
     volumes:
       - type: bind
         source: "${INVITES_DATA_PATH:?Set the client-data dataset path in .env}"
         target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./.settings
+        target: /settings
         bind:
           create_host_path: false
     healthcheck:
@@ -26,6 +29,3 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
-secrets:
-  invites_smtp_password:
-    file: ./.smtp-password
