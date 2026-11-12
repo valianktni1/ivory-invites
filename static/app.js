@@ -2,8 +2,12 @@
 
 const app = document.querySelector('#app');
 const designs = {
-  wedding: {name: 'Wedding', title: 'Amelia & Oliver', intro: 'Together with their families', colour: '#4c5631'},
-  birthday: {name: 'Birthday', title: 'Leo turns 6!', intro: "You're invited", colour: '#315238'}
+  wedding: {name: 'Country house wedding', title: 'Amelia & Oliver', intro: 'Together with their families',
+    colour: '#4c5631', artwork: 'A country house framed by garden flowers'},
+  birthday: {name: 'Dinosaur birthday', title: 'Leo turns 6!', intro: "You're invited",
+    colour: '#315238', artwork: 'Two painted dinosaurs among ferns'},
+  'black-tie': {name: 'Black-tie wedding', title: 'Thea & Rowan', intro: 'Together with their families', colour: '#34352f'},
+  disco: {name: 'Disco birthday', title: 'Frankie turns 30', intro: "You're invited", colour: '#673584'}
 };
 let photoUpdate = null;
 let photoRemoved = false;
@@ -20,6 +24,21 @@ function link(label, href, className) {
   const anchor = el('a', label, className);
   anchor.href = href;
   return anchor;
+}
+
+function templateArtwork(key, photo = '') {
+  const design = designs[key];
+  if (photo || design.artwork) {
+    const image = el('img');
+    image.src = photo || '/static/' + key + '.webp';
+    image.alt = photo ? 'Invitation photo' : design.artwork;
+    return image;
+  }
+  const art = el('div', undefined, 'type-art ' + key);
+  art.setAttribute('aria-hidden', 'true');
+  art.append(el('span', key === 'black-tie' ? '❖' : '✦', 'art-emblem'),
+    el('strong', design.title));
+  return art;
 }
 
 async function api(path, data) {
@@ -74,17 +93,14 @@ function home() {
   const copy = el('div', undefined, 'hero');
   copy.append(el('p', 'DIGITAL INVITATIONS', 'eyebrow'),
     el('h1', 'An invitation worth opening.'),
-    el('p', 'Try two interactive invitations. Open them as a guest and see how the RSVP works.', 'lede'));
+    el('p', 'Try an invitation as a guest and see how the RSVP works.', 'lede'));
   main.append(copy);
   const cards = el('div', undefined, 'cards');
   for (const [key, design] of Object.entries(designs)) {
     const card = link(undefined, '/demo/' + key, 'design-card ' + key);
-    const image = el('img');
-    image.src = '/static/' + key + '.webp';
-    image.alt = key === 'wedding' ? 'A country house framed by garden flowers' : 'Two painted dinosaurs among ferns';
     const info = el('div', undefined, 'design-info');
     info.append(el('p', design.name, 'eyebrow'), el('h2', design.title), el('span', 'Open demo →', 'design-action'));
-    card.append(image, info);
+    card.append(templateArtwork(key), info);
     cards.append(card);
   }
   main.append(cards);
@@ -340,13 +356,10 @@ function templatePicker() {
   const cards = el('div', undefined, 'cards');
   for (const [key, design] of Object.entries(designs)) {
     const card = link(undefined, '/editor?new=' + key, 'design-card');
-    const artwork = el('img');
-    artwork.src = '/static/' + key + '.webp';
-    artwork.alt = '';
     const copy = el('div', undefined, 'design-info');
     copy.append(el('p', design.name, 'eyebrow'), el('h2', design.title),
       el('span', 'Use this template →', 'design-action'));
-    card.append(artwork, copy);
+    card.append(templateArtwork(key), copy);
     cards.append(card);
   }
   page.append(heading, cards);
@@ -385,7 +398,7 @@ async function editor(id, template = 'wedding') {
   const section = el('section', undefined, 'panel');
   section.innerHTML = `
     <form id="event-form">
-      <label>Design<select name="template"><option value="wedding">Amelia & Oliver · Wedding</option><option value="birthday">Leo Turns 6 · Birthday</option></select></label>
+      <label>Design<select name="template"></select></label>
       <div class="fields"><label>Invitation title<input name="title" required maxlength="90"></label>
       <label>Opening line<input name="intro" maxlength="90"></label></div>
       <div class="fields"><label>Date<input type="date" name="date" required></label>
@@ -400,11 +413,13 @@ async function editor(id, template = 'wedding') {
       <button type="submit" class="button">Save invitation</button><p role="status" class="status"></p>
     </form>`;
   const form = section.querySelector('form');
+  for (const [key, design] of Object.entries(designs)) {
+    const option = el('option', design.name);
+    option.value = key;
+    form.elements.template.append(option);
+  }
   const preview = el('div', undefined, 'editor-preview');
-  const artwork = el('img');
-  artwork.alt = 'Invitation artwork preview';
   const previewTitle = el('strong');
-  preview.append(artwork, previewTitle);
   form.querySelector('#remove-photo').after(preview);
   const remove = form.querySelector('#remove-photo');
   const defaults = selected || {template, ...designs[template]};
@@ -415,7 +430,7 @@ async function editor(id, template = 'wedding') {
   function drawPreview() {
     const photo = photoUpdate ? 'data:image/jpeg;base64,' + photoUpdate
       : (selected?.hasPhoto && !photoRemoved ? '/api/events/' + id + '/photo' : '');
-    artwork.src = photo || '/static/' + form.elements.template.value + '.webp';
+    preview.replaceChildren(templateArtwork(form.elements.template.value, photo), previewTitle);
     previewTitle.textContent = form.elements.title.value;
     previewTitle.style.color = readableAccent(form.elements.colour.value);
     remove.hidden = !photo;
@@ -571,10 +586,16 @@ async function guestView(token, preview = false) {
   const shell = el('section', undefined, 'opening');
   const opener = el('button', undefined, 'opener');
   opener.setAttribute('aria-label', 'Open invitation');
-  const wedding = event.template === 'wedding';
-  const decoration = el('span', undefined, wedding ? 'envelope' : 'egg');
+  const template = event.template;
+  const opening = {
+    wedding: ['envelope', 'Tap the wax seal to open'],
+    birthday: ['egg', 'Tap the egg to hatch it'],
+    'black-tie': ['ballroom-doors', 'Tap to open the ballroom doors'],
+    disco: ['disco-orb', 'Tap to light up the disco ball']
+  }[template];
+  const decoration = el('span', undefined, opening[0]);
   decoration.setAttribute('aria-hidden', 'true');
-  if (wedding) {
+  if (template === 'wedding') {
     const initials = event.title.split(/\s*(?:&|\+|\band\b)\s*/i).slice(0, 2)
       .map(name => name.trim().match(/\p{L}/u)?.[0] || '').filter(Boolean).join(' & ');
     const letter = el('span', undefined, 'envelope-letter');
@@ -583,13 +604,19 @@ async function guestView(token, preview = false) {
     seal.append(el('span', initials.toLocaleUpperCase('en-GB') || '✦'));
     decoration.append(letter, el('span', undefined, 'envelope-front'),
       el('span', undefined, 'envelope-flap'), seal);
-  } else {
+  } else if (template === 'birthday') {
     decoration.append(el('span', undefined, 'egg-light'), el('span', undefined, 'egg-top'),
       el('span', undefined, 'egg-bottom'), el('span', undefined, 'egg-crack'));
+  } else if (template === 'black-tie') {
+    decoration.append(el('span', undefined, 'door-light'), el('span', undefined, 'door-left'),
+      el('span', undefined, 'door-right'));
+  } else {
+    decoration.append(el('span', undefined, 'disco-sphere'), el('span', '✦', 'disco-spark spark-one'),
+      el('span', '✧', 'disco-spark spark-two'));
   }
   opener.append(decoration);
   shell.append(el('p', 'AN INVITATION FOR', 'eyebrow'), el('h1', guest.label), opener,
-    el('p', wedding ? 'Tap the wax seal to open' : 'Tap the egg to hatch it', 'opening-hint'));
+    el('p', opening[1], 'opening-hint'));
   const card = el('article', undefined, 'invite-card');
   card.hidden = true;
   const cover = el('div', undefined, 'cover-copy');
@@ -597,10 +624,7 @@ async function guestView(token, preview = false) {
   const title = el('h1', event.title);
   title.tabIndex = -1;
   cover.append(title);
-  if (wedding) cover.append(el('span', undefined, 'cover-rule'));
-  const image = el('img', undefined, 'cover-image');
-  image.src = guest.photo || '/static/' + event.template + '.webp';
-  image.alt = guest.photo ? 'Event photo' : event.template === 'wedding' ? 'An English country house and gardens' : 'Painted dinosaurs and ferns';
+  if (template === 'wedding' || template === 'black-tie') cover.append(el('span', undefined, 'cover-rule'));
   const details = el('section', undefined, 'invite-details');
   details.append(el('p', dateText(event), 'event-date'), el('p', event.venue, 'venue'));
   if (event.message) details.append(el('p', event.message, 'event-message'));
@@ -612,7 +636,13 @@ async function guestView(token, preview = false) {
     actions.append(link('Add to calendar', '/calendar/' + token, 'button secondary'));
     details.append(actions);
   }
-  card.append(cover, image, details);
+  card.append(cover);
+  if (guest.photo || designs[template].artwork) {
+    const image = templateArtwork(template, guest.photo);
+    image.className = 'cover-image';
+    card.append(image);
+  }
+  card.append(details);
   if (!preview) card.append(replyForm(token, guest));
   function open() {
     opener.disabled = true;

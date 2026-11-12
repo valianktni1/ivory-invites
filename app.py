@@ -34,7 +34,16 @@ TEMPLATES = {
     "birthday": dict(title="Leo turns 6!", intro="You're invited", date="2027-07-11",
                      time="13:00", venue="The party garden", colour="#315238",
                      message="Come stomp, roar and celebrate with us!", meal="", song=False),
+    "black-tie": dict(title="Thea & Rowan", intro="Together with their families",
+                      date="2027-10-16", time="17:00", venue="The Ballroom", colour="#34352f",
+                      message="Join us for our wedding ceremony, dinner and dancing. Black tie.",
+                      meal="Roast chicken\nWild mushroom risotto", song=True),
+    "disco": dict(title="Frankie turns 30", intro="You're invited", date="2027-09-04",
+                  time="19:30", venue="The Glitter Room", colour="#673584",
+                  message="Come for a drink, stay for a dance. A little sparkle is very welcome.",
+                  meal="", song=True),
 }
+DEMO_KEYS = "|".join(re.escape(key) for key in TEMPLATES)
 STATIC_TYPES = {"app.css": "text/css; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
                 "wedding.webp": "image/webp", "birthday.webp": "image/webp"}
 HOST_PAGES = {"/", "/editor", "/admin", "/admin/mail", "/admin/mail-setup",
@@ -152,7 +161,7 @@ def guest_row(connection, token):
 def guest_details(connection, token):
     if token in TEMPLATES:
         return dict(event=dict(TEMPLATES[token], template=token), demo=True,
-                    label="The Smith family" if token == "wedding" else "Sam & Jamie",
+                    label="The Smith family" if token in {"wedding", "black-tie"} else "Sam & Jamie",
                     names=["Sam", "Jamie"], answered=False)
     row = guest_row(connection, token)
     return dict(event=json.loads(row["details"]), demo=False, label=row["label"],
@@ -337,10 +346,10 @@ class Handler(BaseHTTPRequestHandler):
             name = path[8:]
             self.send((ROOT / "static" / name).read_bytes(), STATIC_TYPES[name])
             return
-        if path in HOST_PAGES or re.fullmatch(fr"/(?:invite/{TOKEN}|demo/(?:wedding|birthday))", path):
+        if path in HOST_PAGES or re.fullmatch(fr"/(?:invite/{TOKEN}|demo/(?:{DEMO_KEYS}))", path):
             self.send((ROOT / "static" / "index.html").read_bytes(), "text/html; charset=utf-8")
             return
-        match = re.fullmatch(fr"/(api/guest|calendar|photo)/({TOKEN}|wedding|birthday)", path)
+        match = re.fullmatch(fr"/(api/guest|calendar|photo)/({TOKEN}|{DEMO_KEYS})", path)
         if match:
             action, token = match.groups()
             with db() as connection:
@@ -436,7 +445,7 @@ class Handler(BaseHTTPRequestHandler):
             mail_settings.configure(data, bootstrap=bootstrap)
             self.json({"ok": True})
             return
-        match = re.fullmatch(fr"/api/guest/({TOKEN}|wedding|birthday)", path)
+        match = re.fullmatch(fr"/api/guest/({TOKEN}|{DEMO_KEYS})", path)
         if match:
             with db() as connection:
                 if match[1] not in TEMPLATES:
