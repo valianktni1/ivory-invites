@@ -1,0 +1,23 @@
+name: ivory-invites
+services:
+  invites:
+    build: .
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${INVITES_PORT:-30112}:8080"
+    environment:
+      INVITES_PASSWORD: "${INVITES_PASSWORD:?Set the pilot password in .env}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:?Set the HTTPS address in .env}"
+    volumes:
+      - type: bind
+        source: "${INVITES_DATA_PATH:-./data}"
+        target: /data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4).close()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
