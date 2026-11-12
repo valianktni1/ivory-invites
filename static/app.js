@@ -5,7 +5,6 @@ const designs = {
   wedding: {name: 'Wedding', title: 'Amelia & Oliver', intro: 'Together with their families', colour: '#4c5631'},
   birthday: {name: 'Birthday', title: 'Leo turns 6!', intro: "You're invited", colour: '#315238'}
 };
-let current = null;
 let photoUpdate = null;
 let photoRemoved = false;
 
@@ -98,37 +97,88 @@ function showLogin() {
   app.append(box);
   wire(box.querySelector('form'), async (data) => {
     await api('/api/login', {password: data.get('password')});
-    await editor();
+    await organiserView();
   });
 }
 
-async function editor(id) {
-  const [events, selected] = await Promise.all([api('/api/events'), id ? api('/api/events/' + id) : null]);
-  current = selected;
-  photoUpdate = null;
-  photoRemoved = false;
-  const top = header('View demos', '/');
+function organiserHeader() {
+  const top = header('Your invitations', '/editor');
   const signOut = el('button', 'Sign out', 'quiet');
   signOut.addEventListener('click', async () => {
     await api('/api/logout', {});
-    showLogin();
+    location.assign('/editor');
   });
   top.append(signOut);
-  const main = el('div', undefined, 'editor-layout');
-  const list = el('aside', undefined, 'panel event-list');
-  const create = el('button', 'New invitation', 'button secondary');
-  create.addEventListener('click', () => editor());
-  list.append(el('h2', 'Your invitations'), create);
+  return top;
+}
+
+function invitationUrl(id) {
+  return '/editor?event=' + encodeURIComponent(id);
+}
+
+async function dashboard() {
+  const events = await api('/api/events');
+  const page = el('section', undefined, 'organiser-page');
+  const heading = el('div', undefined, 'organiser-heading');
+  heading.append(el('h1', 'Your invitations'),
+    link('New invitation', '/editor?new=1', 'button'));
+  page.append(heading);
+  const list = el('div', undefined, 'saved-invitations');
+  if (!events.length) list.append(el('p', 'Choose a template to create your first invitation.', 'panel'));
   for (const event of events) {
-    const button = el('button', event.title, 'event-tab');
-    if (event.id === id) button.setAttribute('aria-current', 'true');
-    button.addEventListener('click', () => editor(event.id));
-    list.append(button);
+    const card = link(undefined, invitationUrl(event.id), 'panel saved-invitation');
+    const copy = el('div');
+    copy.append(el('h2', event.title), el('p', dateText(event), 'muted'));
+    card.append(copy, el('span', 'Open invitation →', 'design-action'));
+    list.append(card);
   }
-  const work = el('div', undefined, 'editor-main');
+  page.append(list);
+  app.replaceChildren(organiserHeader(), page);
+}
+
+function templatePicker() {
+  const page = el('section', undefined, 'organiser-page');
+  const heading = el('div', undefined, 'organiser-heading');
+  heading.append(el('h1', 'Choose a template'));
+  const cards = el('div', undefined, 'cards');
+  for (const [key, design] of Object.entries(designs)) {
+    const card = link(undefined, '/editor?new=' + key, 'design-card');
+    const artwork = el('img');
+    artwork.src = '/static/' + key + '.webp';
+    artwork.alt = '';
+    const copy = el('div', undefined, 'design-info');
+    copy.append(el('p', design.name, 'eyebrow'), el('h2', design.title),
+      el('span', 'Use this template →', 'design-action'));
+    card.append(artwork, copy);
+    cards.append(card);
+  }
+  page.append(heading, cards);
+  app.replaceChildren(organiserHeader(), page);
+}
+
+async function organiserView() {
+  const query = new URLSearchParams(location.search);
+  const id = query.get('event');
+  const template = query.get('new');
+  if (id) await editor(id);
+  else if (template && Object.hasOwn(designs, template)) await editor(null, template);
+  else if (query.has('new')) templatePicker();
+  else await dashboard();
+}
+
+async function editor(id, template = 'wedding') {
+  const selected = id ? await api('/api/events/' + encodeURIComponent(id)) : null;
+  photoUpdate = null;
+  photoRemoved = false;
+  const work = el('div', undefined, 'organiser-page editor-workspace');
+  const heading = el('div', undefined, 'organiser-heading');
+  heading.append(el('h1', id ? 'Edit invitation' : 'Create an invitation'));
+  heading.append(id
+    ? link('Guest links and replies', '#replies', 'button secondary')
+    : link('Choose another template', '/editor?new=1', 'button secondary'));
+  work.append(heading);
   const section = el('section', undefined, 'panel');
   section.innerHTML = `
-    <h1>${id ? 'Edit invitation' : 'Create an invitation'}</h1>
     <form id="event-form">
       <label>Design<select name="template"><option value="wedding">Amelia & Oliver · Wedding</option><option value="birthday">Leo Turns 6 · Birthday</option></select></label>
       <div class="fields"><label>Invitation title<input name="title" required maxlength="90"></label>
@@ -152,7 +202,7 @@ async function editor(id) {
   preview.append(artwork, previewTitle);
   form.querySelector('#remove-photo').after(preview);
   const remove = form.querySelector('#remove-photo');
-  const defaults = selected || {template: 'wedding', ...designs.wedding};
+  const defaults = selected || {template, ...designs[template]};
   for (const field of ['template', 'title', 'intro', 'date', 'time', 'venue', 'message', 'colour', 'meal']) {
     form.elements[field].value = defaults[field] || '';
   }
@@ -205,14 +255,14 @@ async function editor(id) {
     details.song = fields.has('song');
     details.photo = photoUpdate;
     details.removePhoto = photoRemoved;
-    const saved = await api('/api/events' + (current ? '/' + current.id : ''), details);
+    const saved = await api('/api/events' + (id ? '/' + encodeURIComponent(id) : ''), details);
+    history.replaceState(null, '', invitationUrl(saved.id));
     await editor(saved.id);
     alert(document.querySelector('#event-form'), 'Invitation saved.');
   });
   work.append(section);
   if (selected) work.append(households(selected));
-  main.append(list, work);
-  app.replaceChildren(top, main);
+  app.replaceChildren(organiserHeader(), work);
 }
 
 async function resizePhoto(file) {
@@ -240,6 +290,7 @@ async function resizePhoto(file) {
 
 function households(event) {
   const section = el('section', undefined, 'panel');
+  section.id = 'replies';
   section.innerHTML = `
     <h2>Guest links and replies</h2>
     <p>Make one link per household. Each named guest can reply separately.</p>
@@ -430,7 +481,7 @@ async function start() {
       await guestView(path.split('/')[2]);
     } else if (path === '/editor') {
       const session = await api('/api/session');
-      if (session.signedIn) await editor();
+      if (session.signedIn) await organiserView();
       else showLogin();
     } else {
       home();
