@@ -3,6 +3,7 @@ import json
 import os
 import re
 import secrets
+import smtplib
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -34,7 +35,7 @@ TEMPLATES = {
 }
 STATIC_TYPES = {"app.css": "text/css; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
                 "wedding.webp": "image/webp", "birthday.webp": "image/webp"}
-HOST_PAGES = {"/", "/editor", "/account/signup", "/account/setup", "/account/forgot", "/account/reset"}
+HOST_PAGES = {"/", "/editor", "/admin", "/account/signup", "/account/setup", "/account/forgot", "/account/reset"}
 UK = ZoneInfo("Europe/London")
 
 
@@ -136,7 +137,9 @@ def event_row(connection, event_id, account_id=None):
 def guest_row(connection, token):
     row = connection.execute("""
         SELECT h.*, e.details, e.photo IS NOT NULL AS has_photo
-        FROM households h JOIN events e ON e.id = h.event_id WHERE h.token = ?
+        FROM households h JOIN events e ON e.id = h.event_id
+        LEFT JOIN accounts a ON a.id = e.account_id
+        WHERE h.token = ? AND (e.account_id IS NULL OR a.access IN ('free', 'paid'))
     """, (token,)).fetchone()
     if row is None:
         raise ClientError("Invitation link not found.", 404)
@@ -253,6 +256,9 @@ class Handler(BaseHTTPRequestHandler):
     def account_route(self, path, data):
         email = accounts.email_address(data.get("email"))
         if path in ("/api/account/signup", "/api/account/forgot"):
+            if path.endswith("/signup") and email != accounts.OWNER_EMAIL:
+                self.json({"ok": True}, 202)
+                return
             if not accounts.SMTP_PASSWORD:
                 raise ClientError("Account email is temporarily unavailable.", 503)
             accounts.limit("mail", email)
@@ -275,6 +281,32 @@ class Handler(BaseHTTPRequestHandler):
             accounts.end_session(connection, self.session_token())
         cookie = self.cookie(session or "", accounts.SESSION_AGE if session else 0)
         self.json({"ok": True}, headers=[cookie])
+
+    def admin_action(self, path, data):
+        with db() as connection:
+            self.require_admin(connection, self.require_host(connection))
+            email = accounts.email_address(data.get("email"))
+            access = data.get("access")
+            if email == accounts.OWNER_EMAIL or access not in accounts.ACCESS:
+                raise ClientError("Choose a customer email and an access level.")
+            if path == "/api/admin/access":
+                accounts.change_access(connection, email, access)
+            else:
+                if not accounts.SMTP_PASSWORD:
+                    raise ClientError("Account email is temporarily unavailable.", 503)
+                token = accounts.prepare_customer(connection, email, access)
+        if path == "/api/admin/access":
+            self.json({"ok": True})
+            return
+        try:
+            accounts.send_link(email, "signup", token, ORIGIN)
+        except (OSError, smtplib.SMTPException) as error:
+            with db() as connection:
+                connection.execute("DELETE FROM account_links WHERE token_hash = ?", (accounts.token_hash(token),))
+            raise ClientError("Email could not be sent. Check the mailbox settings, then try again.", 502) from error
+        with db() as connection:
+            connection.execute("UPDATE customer_invites SET sent_at = strftime('%s','now') WHERE email = ?", (email,))
+        self.json({"ok": True})
 
     def do_GET(self):
         self.handle_request(False)
@@ -328,10 +360,22 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/session":
             with db() as connection:
                 account_id = accounts.session_account(connection, self.session_token())
-            self.json({"signedIn": account_id is not None})
+                profile = accounts.profile(connection, account_id) if account_id is not None else None
+                if profile:
+                    result = dict(signedIn=True, admin=profile["email"] == accounts.OWNER_EMAIL,
+                                  access=profile["access"])
+                else:
+                    owner = connection.execute("SELECT 1 FROM accounts WHERE email = ?",
+                                               (accounts.OWNER_EMAIL,)).fetchone()
+                    result = dict(signedIn=False, ownerSetup=owner is None)
+            self.json(result)
             return
         with db() as connection:
             account_id = self.require_host(connection)
+            if path == "/api/admin/customers":
+                self.require_admin(connection, account_id)
+                self.json(accounts.customers(connection))
+                return
             if path == "/api/events":
                 rows = connection.execute("SELECT id, details FROM events WHERE account_id = ? ORDER BY rowid DESC",
                                           (account_id,))
@@ -346,10 +390,12 @@ class Handler(BaseHTTPRequestHandler):
                         raise ClientError("Photo not found.", 404)
                     self.send(event["photo"], "image/jpeg")
                     return
+                can_share = accounts.profile(connection, account_id)["access"] != "trial"
                 rows = connection.execute("SELECT * FROM households WHERE event_id = ? ORDER BY rowid",
-                                          (event_id,))
+                                          (event_id,)) if can_share else ()
                 self.json(dict(id=event_id, **json.loads(event["details"]),
                                hasPhoto=event["photo"] is not None,
+                               canShare=can_share,
                                households=[household_details(row) for row in rows]))
                 return
         raise ClientError("Page not found.", 404)
@@ -360,14 +406,24 @@ class Handler(BaseHTTPRequestHandler):
             raise ClientError("Sign in to manage invitations.", 401)
         return account_id
 
+    @staticmethod
+    def require_admin(connection, account_id):
+        if accounts.profile(connection, account_id)["email"] != accounts.OWNER_EMAIL:
+            raise ClientError("Administrator access is required.", 403)
+
     def write_route(self, path, data):
         if path in {"/api/login", "/api/account/signup", "/api/account/setup",
                     "/api/account/forgot", "/api/account/reset"}:
             self.account_route(path, data)
             return
+        if path in {"/api/admin/invite", "/api/admin/access"}:
+            self.admin_action(path, data)
+            return
         match = re.fullmatch(fr"/api/guest/({TOKEN}|wedding|birthday)", path)
         if match:
             with db() as connection:
+                if match[1] not in TEMPLATES:
+                    connection.execute("BEGIN IMMEDIATE")
                 save_reply(connection, match[1], data)
             self.json({"ok": True})
             return
@@ -381,10 +437,14 @@ class Handler(BaseHTTPRequestHandler):
             raise ClientError("Page not found.", 404)
         event_id, household = match.groups()
         with db() as connection:
+            if household:
+                connection.execute("BEGIN IMMEDIATE")
             account_id = self.require_host(connection)
             if event_id:
                 event_row(connection, event_id, account_id)
             if household:
+                if accounts.profile(connection, account_id)["access"] == "trial":
+                    raise ClientError("Trial access is for designing and previewing invitations.", 403)
                 label = string(data, "household name", 100, True)
                 names = [name.strip() for name in string(data, "guest names", 800, True).splitlines()
                          if name.strip()]

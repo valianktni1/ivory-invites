@@ -7,6 +7,7 @@ const designs = {
 };
 let photoUpdate = null;
 let photoRemoved = false;
+let session = {};
 
 function el(tag, value, className) {
   const element = document.createElement(tag);
@@ -102,7 +103,7 @@ function showLogin(message = '') {
       <p role="status" class="status"></p>
     </form>
     <div class="account-links">
-      <a href="/account/signup">Create an account</a>
+      ${session.ownerSetup ? '<a href="/account/signup">Set up the owner account</a>' : ''}
       <a href="/account/forgot">Forgot your password?</a>
     </div>`;
   app.append(box);
@@ -110,7 +111,9 @@ function showLogin(message = '') {
   if (message) alert(form, message);
   wire(form, async (data) => {
     await api('/api/login', {email: data.get('email'), password: data.get('password')});
-    await organiserView();
+    session = await api('/api/session');
+    if (location.pathname === '/admin') await adminPage();
+    else await organiserView();
   });
 }
 
@@ -120,16 +123,16 @@ function accountPage(path) {
   const choosing = path.endsWith('/setup') || path.endsWith('/reset');
   const reset = path.endsWith('/forgot') || path.endsWith('/reset');
   const title = choosing ? (reset ? 'Reset your password' : 'Choose your password')
-    : (reset ? 'Forgot your password?' : 'Create your account');
+    : (reset ? 'Forgot your password?' : 'Set up the owner account');
   const token = location.hash.slice(1);
   if (choosing && !/^[A-Za-z0-9_-]{43}$/.test(token)) {
-    box.append(el('h1', title), el('p', 'Open the full link from your email to continue.'),
-      link('Request a new link', reset ? '/account/forgot' : '/account/signup', 'button'));
+    box.append(el('h1', title), el('p', 'Open the full link from your email to continue.'));
+    if (reset) box.append(link('Request a new link', '/account/forgot', 'button'));
     app.append(box);
     return;
   }
   const instructions = choosing ? 'Enter the email address the link was sent to.'
-    : 'Enter your email address and we’ll send you a link.';
+    : (reset ? 'Enter your email address and we’ll send you a link.' : 'Enter the configured owner email address.');
   box.innerHTML = `
     <h1>${title}</h1>
     <p>${instructions}</p>
@@ -147,9 +150,10 @@ function accountPage(path) {
     await api('/api' + path, details);
     if (!choosing) {
       alert(form, reset ? 'If an account exists for that address, a reset link will be emailed to you.'
-        : 'If that address can be registered, a sign-up link will be emailed to you. Check your inbox and junk folder.');
+        : 'If that address is ready for owner setup, a link will be emailed to you. Check your inbox and junk folder.');
     } else if (reset) {
       history.replaceState(null, '', '/editor');
+      session = await api('/api/session');
       showLogin('Password updated. Sign in with your new password.');
     } else {
       location.replace('/editor');
@@ -159,6 +163,7 @@ function accountPage(path) {
 
 function organiserHeader() {
   const top = header('Your invitations', '/editor');
+  if (session.admin) top.append(link('Admin', '/admin', 'nav-link'));
   const signOut = el('button', 'Sign out', 'quiet');
   signOut.addEventListener('click', async () => {
     await api('/api/logout', {});
@@ -166,6 +171,93 @@ function organiserHeader() {
   });
   top.append(signOut);
   return top;
+}
+
+function accessField(value = '') {
+  const label = el('label', 'Access');
+  const select = el('select');
+  select.name = 'access';
+  select.required = true;
+  for (const [id, title] of [['', 'Choose access'], ['free', 'Free'], ['trial', 'Trial'], ['paid', 'Paid']]) {
+    const option = el('option', title);
+    option.value = id;
+    select.append(option);
+  }
+  select.value = value;
+  label.append(select);
+  return label;
+}
+
+async function adminPage(message = '') {
+  if (!session.admin) {
+    const panel = el('section', undefined, 'panel login');
+    panel.append(el('h1', 'Administrator access is required'), link('Your invitations', '/editor', 'button'));
+    app.replaceChildren(organiserHeader(), panel);
+    return;
+  }
+  const customers = await api('/api/admin/customers');
+  const page = el('section', undefined, 'organiser-page admin-page');
+  const heading = el('div', undefined, 'organiser-heading');
+  heading.append(el('h1', 'Customer access'));
+  const status = el('p', message, 'status');
+  status.setAttribute('role', 'status');
+  heading.append(status);
+  const invite = el('section', undefined, 'panel');
+  invite.innerHTML = `
+    <h2>Invite a customer</h2>
+    <p>Free gives your couples full access. Trial allows design and preview. Choose Paid once payment is confirmed.</p>
+    <form>
+      <label>Customer email<input name="email" type="email" maxlength="254" required></label>
+      <button type="submit" class="button">Send setup link</button>
+      <p class="status" role="status"></p>
+    </form>`;
+  const form = invite.querySelector('form');
+  form.querySelector('button').before(accessField());
+  wire(form, async (fields) => {
+    await api('/api/admin/invite', Object.fromEntries(fields));
+    await adminPage('Setup link sent.');
+  });
+  const list = el('section', undefined, 'panel customer-list');
+  list.append(el('h2', 'Customers'));
+  if (!customers.length) list.append(el('p', 'Customer accounts and pending invitations will appear here.', 'muted'));
+  const labels = {active: 'Active', invited: 'Awaiting setup', unsent: 'Email pending'};
+  for (const customer of customers) {
+    const row = el('form', undefined, 'customer-row');
+    const identity = el('div', undefined, 'customer-identity');
+    identity.append(el('strong', customer.email), el('p', labels[customer.status], 'muted'));
+    const access = accessField(customer.access);
+    access.querySelector('select').setAttribute('aria-label', 'Access for ' + customer.email);
+    const actions = el('div', undefined, 'actions');
+    const save = el('button', 'Change access', 'button secondary');
+    save.type = 'submit';
+    const feedback = el('p', '', 'status');
+    feedback.setAttribute('role', 'status');
+    actions.append(save);
+    if (customer.status !== 'active') {
+      const resend = el('button', 'Send setup link', 'button secondary');
+      resend.type = 'button';
+      resend.addEventListener('click', async () => {
+        resend.disabled = true;
+        try {
+          await api('/api/admin/invite', {email: customer.email, access: access.querySelector('select').value});
+          await adminPage('Setup link sent.');
+        } catch (error) {
+          alert(row, error.message);
+        } finally {
+          resend.disabled = false;
+        }
+      });
+      actions.append(resend);
+    }
+    row.append(identity, access, actions, feedback);
+    wire(row, async (fields) => {
+      await api('/api/admin/access', {email: customer.email, access: fields.get('access')});
+      await adminPage('Access updated.');
+    });
+    list.append(row);
+  }
+  page.append(heading, invite, list);
+  app.replaceChildren(organiserHeader(), page);
 }
 
 function invitationUrl(id) {
@@ -215,8 +307,10 @@ function templatePicker() {
 async function organiserView() {
   const query = new URLSearchParams(location.search);
   const id = query.get('event');
+  const preview = query.get('preview');
   const template = query.get('new');
-  if (id) await editor(id);
+  if (preview) await guestView(preview, true);
+  else if (id) await editor(id);
   else if (template && Object.hasOwn(designs, template)) await editor(null, template);
   else if (query.has('new')) templatePicker();
   else await dashboard();
@@ -229,10 +323,16 @@ async function editor(id, template = 'wedding') {
   const work = el('div', undefined, 'organiser-page editor-workspace');
   const heading = el('div', undefined, 'organiser-heading');
   heading.append(el('h1', id ? 'Edit invitation' : 'Create an invitation'));
-  heading.append(id
-    ? link('Guest links and replies', '#replies', 'button secondary')
-    : link('Choose another template', '/editor?new=1', 'button secondary'));
+  const shortcuts = el('div', undefined, 'actions');
+  if (id) {
+    shortcuts.append(link('Preview invitation', '/editor?preview=' + encodeURIComponent(id), 'button secondary'));
+    if (selected.canShare) shortcuts.append(link('Guest links and replies', '#replies', 'button secondary'));
+  } else shortcuts.append(link('Choose another template', '/editor?new=1', 'button secondary'));
+  heading.append(shortcuts);
   work.append(heading);
+  if (session.access === 'trial') {
+    work.append(el('p', 'Trial access lets you design and preview. Guest links and RSVPs unlock when your access is upgraded.', 'muted'));
+  }
   const section = el('section', undefined, 'panel');
   section.innerHTML = `
     <form id="event-form">
@@ -317,7 +417,7 @@ async function editor(id, template = 'wedding') {
     alert(document.querySelector('#event-form'), 'Invitation saved.');
   });
   work.append(section);
-  if (selected) work.append(households(selected));
+  if (selected?.canShare) work.append(households(selected));
   app.replaceChildren(organiserHeader(), work);
 }
 
@@ -407,8 +507,13 @@ function readableAccent(hex) {
   return lightness > 0.16 ? '#293224' : hex;
 }
 
-async function guestView(token) {
-  const guest = await api('/api/guest/' + token);
+async function guestView(token, preview = false) {
+  const path = '/api/events/' + encodeURIComponent(token);
+  let guest;
+  if (preview) {
+    const draft = await api(path);
+    guest = {event: draft, label: 'Your guests', photo: draft.hasPhoto ? path + '/photo' : ''};
+  } else guest = await api('/api/guest/' + token);
   const event = guest.event;
   document.title = event.title + ' · Ivory Invites';
   const page = el('div', undefined, 'guest-page ' + event.template);
@@ -452,11 +557,14 @@ async function guestView(token) {
   if (event.message) details.append(el('p', event.message, 'event-message'));
   const actions = el('div', undefined, 'actions');
   const map = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(event.venue);
-  actions.append(link('RSVP', '#rsvp', 'button'));
-  if (!guest.demo) actions.append(link('Directions', map, 'button secondary'));
-  actions.append(link('Add to calendar', '/calendar/' + token, 'button secondary'));
-  details.append(actions);
-  card.append(cover, image, details, replyForm(token, guest));
+  if (!preview) {
+    actions.append(link('RSVP', '#rsvp', 'button'));
+    if (!guest.demo) actions.append(link('Directions', map, 'button secondary'));
+    actions.append(link('Add to calendar', '/calendar/' + token, 'button secondary'));
+    details.append(actions);
+  }
+  card.append(cover, image, details);
+  if (!preview) card.append(replyForm(token, guest));
   function open() {
     opener.disabled = true;
     shell.classList.add('unsealing');
@@ -469,6 +577,7 @@ async function guestView(token) {
   }
   opener.addEventListener('click', open);
   if (guest.demo) page.append(header('All demos', '/'));
+  if (preview) page.append(header('Back to editor', invitationUrl(token)));
   page.append(shell, card);
   app.replaceChildren(page);
 }
@@ -553,9 +662,10 @@ async function start() {
       await guestView(path.split('/')[2]);
     } else if (path.startsWith('/account/')) {
       accountPage(path);
-    } else if (path === '/editor') {
-      const session = await api('/api/session');
-      if (session.signedIn) await organiserView();
+    } else if (path === '/editor' || path === '/admin') {
+      session = await api('/api/session');
+      if (session.signedIn && path === '/admin') await adminPage();
+      else if (session.signedIn) await organiserView();
       else showLogin();
     } else {
       home();

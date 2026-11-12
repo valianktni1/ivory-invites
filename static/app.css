@@ -59,6 +59,14 @@ button:disabled { cursor: wait; opacity: .7; }
 .saved-invitation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem 1.2rem; text-decoration: none; }
 .saved-invitation h2 { margin-bottom: .25rem; overflow-wrap: anywhere; }
 .saved-invitation:hover { border-color: var(--accent); }
+.admin-page { display: grid; gap: 1rem; }
+.admin-page .organiser-heading { margin-bottom: 0; }
+.customer-row {
+  grid-template-columns: minmax(12rem, 1.4fr) minmax(8rem, .65fr) minmax(11rem, 1fr);
+  align-items: end; border-top: 1px solid var(--line); padding: .85rem 0;
+}
+.customer-row .status { grid-column: 1 / -1; }
+.customer-identity { align-self: center; overflow-wrap: anywhere; }
 form { display: grid; gap: .95rem; }
 label { display: grid; gap: .35rem; min-width: 0; font-weight: 600; font-size: .94rem; }
 input:not([type=checkbox], [type=radio]), select, textarea {
@@ -239,11 +247,12 @@ legend { padding: 0 .35rem; font: 1.17rem var(--serif); overflow-wrap: anywhere;
 @media (max-width: 620px) {
   .cards { grid-template-columns: minmax(0, 1fr); }
   .top { min-height: 64px; }
+  .customer-row { grid-template-columns: minmax(0, 1fr); align-items: start; }
 }
 @media (max-width: 430px) {
   .fields { grid-template-columns: minmax(0, 1fr); }
   .brand { font-size: 1.28rem; }
-  .top { gap: .55rem; }
+  .top { gap: .55rem; flex-wrap: wrap; }
   .nav-link, .quiet { font-size: .8rem; }
 }
 @media (prefers-reduced-motion: reduce) {

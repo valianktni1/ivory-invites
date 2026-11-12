@@ -60,7 +60,17 @@ The pilot includes two interactive public demos and a workspace for each organis
      docker compose ps
    ```
 
-6. The existing Nginx Proxy Manager host for `invites.ivorydigital.uk` should forward HTTP to the TrueNAS LAN address on port `30012` and serve HTTPS to visitors. At `/editor`, choose **Create an account** and enter the owner email to claim your pilot invitations. Open the email link, enter the same email address and choose a password with at least eight characters and one special character. Try creating a second account with a separate email address to verify its dashboard starts empty.
+6. The existing Nginx Proxy Manager host for `invites.ivorydigital.uk` should forward HTTP to the TrueNAS LAN address on port `30012` and serve HTTPS to visitors. At `/editor`, choose **Set up the owner account** if you have not set up the owner login. Open the email link, enter the same email address and choose a password with at least eight characters and one special character.
+
+## Invite and manage customers
+
+Sign in as the configured owner and open **Admin**. Enter a customer's email address, select their access and choose **Send setup link**. The customer opens the email and sets their own password. Only the owner can send new customer setup links.
+
+- **Free** gives wedding couples full invitation access.
+- **Trial** lets customers design, save and privately preview drafts.
+- **Paid** gives full access after you confirm their payment.
+
+Use **Change access** to upgrade a Trial account. Their drafts are already in their dashboard. Payment is recorded manually by choosing Paid. Existing non-owner accounts from the earlier pilot start at Trial until the owner changes their access. Existing owner invitations are carried over.
 
 If the sign-up email does not arrive, check your junk folder and run `docker compose logs --tail=50 invites` for mail delivery errors. Each generated household link can be opened and used to RSVP by whoever holds the link. Send each link to the intended household. Demo replies are discarded. Payment, the wedding planner connection and the occasion landing pages are separate milestones.
 
