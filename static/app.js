@@ -361,12 +361,25 @@ async function guestView(token) {
   const shell = el('section', undefined, 'opening');
   const opener = el('button', undefined, 'opener');
   opener.setAttribute('aria-label', 'Open invitation');
-  const decoration = el('span', undefined, event.template === 'wedding' ? 'envelope' : 'egg');
+  const wedding = event.template === 'wedding';
+  const decoration = el('span', undefined, wedding ? 'envelope' : 'egg');
   decoration.setAttribute('aria-hidden', 'true');
-  decoration.append(el('span'));
+  if (wedding) {
+    const initials = event.title.split(/\s*(?:&|\+|\band\b)\s*/i).slice(0, 2)
+      .map(name => name.trim().match(/\p{L}/u)?.[0] || '').filter(Boolean).join(' & ');
+    const letter = el('span', undefined, 'envelope-letter');
+    letter.append(el('span', initials.toLocaleUpperCase('en-GB')));
+    const seal = el('span', undefined, 'wax-seal');
+    seal.append(el('span', initials.toLocaleUpperCase('en-GB') || '✦'));
+    decoration.append(letter, el('span', undefined, 'envelope-front'),
+      el('span', undefined, 'envelope-flap'), seal);
+  } else {
+    decoration.append(el('span', undefined, 'egg-light'), el('span', undefined, 'egg-top'),
+      el('span', undefined, 'egg-bottom'), el('span', undefined, 'egg-crack'));
+  }
   opener.append(decoration);
   shell.append(el('p', 'AN INVITATION FOR', 'eyebrow'), el('h1', guest.label), opener,
-    el('p', event.template === 'wedding' ? 'Tap the seal to open' : 'Tap the egg to open', 'opening-hint'));
+    el('p', wedding ? 'Tap the wax seal to open' : 'Tap the egg to hatch it', 'opening-hint'));
   const card = el('article', undefined, 'invite-card');
   card.hidden = true;
   const cover = el('div', undefined, 'cover-copy');
@@ -374,6 +387,7 @@ async function guestView(token) {
   const title = el('h1', event.title);
   title.tabIndex = -1;
   cover.append(title);
+  if (wedding) cover.append(el('span', undefined, 'cover-rule'));
   const image = el('img', undefined, 'cover-image');
   image.src = guest.photo || '/static/' + event.template + '.webp';
   image.alt = guest.photo ? 'Event photo' : event.template === 'wedding' ? 'An English country house and gardens' : 'Painted dinosaurs and ferns';
@@ -382,6 +396,7 @@ async function guestView(token) {
   if (event.message) details.append(el('p', event.message, 'event-message'));
   const actions = el('div', undefined, 'actions');
   const map = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(event.venue);
+  actions.append(link('RSVP', '#rsvp', 'button'));
   if (!guest.demo) actions.append(link('Directions', map, 'button secondary'));
   actions.append(link('Add to calendar', '/calendar/' + token, 'button secondary'));
   details.append(actions);
@@ -389,7 +404,7 @@ async function guestView(token) {
   function open() {
     opener.disabled = true;
     shell.classList.add('unsealing');
-    const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 430;
+    const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 920;
     window.setTimeout(() => {
       shell.hidden = true;
       card.hidden = false;
@@ -404,6 +419,7 @@ async function guestView(token) {
 
 function replyForm(token, guest) {
   const section = el('section', undefined, 'rsvp');
+  section.id = 'rsvp';
   section.append(el('h2', 'RSVP'));
   if (guest.demo) section.append(el('p', 'This is a demo. Your reply is not saved.', 'muted'));
   if (guest.answered) section.append(el('p', 'A reply has already been sent. Submit a fresh reply for everyone to update it.'));
