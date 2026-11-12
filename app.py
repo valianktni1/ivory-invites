@@ -1,28 +1,27 @@
 import base64
-import hmac
 import json
 import os
 import re
 import secrets
 import sqlite3
 import threading
-import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import date, datetime
-from http.cookies import SimpleCookie
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+import accounts
+
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("INVITES_DATA", ROOT / "data"))
-PASSWORD = os.environ.get("INVITES_PASSWORD", "")
 ORIGIN = os.environ.get("PUBLIC_ORIGIN", "http://localhost:30112").rstrip("/")
 SECURE = ORIGIN.startswith("https://")
-SESSION_KEY = secrets.token_bytes(32)
-LOGIN_LOCK = threading.Lock()
-LOGIN_ATTEMPTS = []
+MAIL_WORKERS = ThreadPoolExecutor(max_workers=2)
+MAIL_SLOTS = threading.BoundedSemaphore(10)
 TOKEN = r"[A-Za-z0-9_-]{20,64}"
 TEMPLATES = {
     "wedding": dict(title="Amelia & Oliver", intro="Together with their families",
@@ -35,7 +34,7 @@ TEMPLATES = {
 }
 STATIC_TYPES = {"app.css": "text/css; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
                 "wedding.webp": "image/webp", "birthday.webp": "image/webp"}
-HOST_PAGES = {"/", "/editor"}
+HOST_PAGES = {"/", "/editor", "/account/signup", "/account/setup", "/account/forgot", "/account/reset"}
 UK = ZoneInfo("Europe/London")
 
 
@@ -71,6 +70,7 @@ def setup():
             );
             CREATE INDEX IF NOT EXISTS households_by_event ON households(event_id);
         """)
+        accounts.migrate(connection)
 
 
 def string(data, key, limit, required=False):
@@ -122,8 +122,12 @@ def photo_bytes(data):
     return photo
 
 
-def event_row(connection, event_id):
-    row = connection.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+def event_row(connection, event_id, account_id=None):
+    if account_id is None:
+        row = connection.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+    else:
+        row = connection.execute("SELECT * FROM events WHERE id = ? AND account_id = ?",
+                                 (event_id, account_id)).fetchone()
     if row is None:
         raise ClientError("Invitation not found.", 404)
     return row
@@ -218,18 +222,12 @@ class Handler(BaseHTTPRequestHandler):
     def json(self, value, status=200, headers=()):
         self.send(json.dumps(value).encode(), "application/json", status, headers)
 
-    def authenticated(self):
+    def session_token(self):
         try:
             cookies = SimpleCookie(self.headers.get("Cookie", ""))
-            timestamp, digest = cookies["ivory"].value.split(".", 1)
-            return (0 <= time.time() - int(timestamp) <= 43200 and
-                    hmac.compare_digest(digest, self.signature(timestamp)))
-        except (KeyError, ValueError):
-            return False
-
-    @staticmethod
-    def signature(timestamp):
-        return hmac.digest(SESSION_KEY, timestamp.encode(), "sha256").hex()
+            return cookies["ivory"].value
+        except (KeyError, CookieError):
+            return ""
 
     @staticmethod
     def cookie(value, max_age):
@@ -252,19 +250,30 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeError) as error:
             raise ClientError("The request could not be read.") from error
 
-    def login(self, data):
-        password = string(data, "password", 512)
-        with LOGIN_LOCK:
-            now = time.time()
-            LOGIN_ATTEMPTS[:] = [attempt for attempt in LOGIN_ATTEMPTS if now - attempt < 60]
-            if len(LOGIN_ATTEMPTS) >= 10:
-                raise ClientError("Too many attempts. Try again in a minute.", 429)
-            if not hmac.compare_digest(password.encode(), PASSWORD.encode()):
-                LOGIN_ATTEMPTS.append(now)
-                raise ClientError("The password is incorrect.", 401)
-            LOGIN_ATTEMPTS.clear()
-        timestamp = str(int(now))
-        cookie = self.cookie(f"{timestamp}.{self.signature(timestamp)}", 43200)
+    def account_route(self, path, data):
+        email = accounts.email_address(data.get("email"))
+        if path in ("/api/account/signup", "/api/account/forgot"):
+            if not accounts.SMTP_PASSWORD:
+                raise ClientError("Account email is temporarily unavailable.", 503)
+            accounts.limit("mail", email)
+            if not MAIL_SLOTS.acquire(blocking=False):
+                raise ClientError("Account email is busy. Try again shortly.", 503)
+            purpose = "signup" if path.endswith("/signup") else "reset"
+            task = MAIL_WORKERS.submit(accounts.deliver_link, db, email, purpose, ORIGIN)
+            task.add_done_callback(lambda _: MAIL_SLOTS.release())
+            self.json({"ok": True}, 202)
+            return
+        logging_in = path == "/api/login"
+        accounts.limit("login" if logging_in else "setup", email)
+        password = accounts.password_value(data.get("password"), new=not logging_in)
+        with db() as connection:
+            if logging_in:
+                session = accounts.login(connection, email, password)
+            else:
+                purpose = "signup" if path.endswith("/setup") else "reset"
+                session = accounts.complete(connection, email, password, data.get("token"), purpose)
+            accounts.end_session(connection, self.session_token())
+        cookie = self.cookie(session or "", accounts.SESSION_AGE if session else 0)
         self.json({"ok": True}, headers=[cookie])
 
     def do_GET(self):
@@ -280,7 +289,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_route(path, self.read_json())
             else:
                 self.read_route(path)
-        except ClientError as error:
+        except (ClientError, accounts.AccountError) as error:
             self.json({"error": error.message}, error.status)
         except (BrokenPipeError, ConnectionResetError):
             return
@@ -317,18 +326,21 @@ class Handler(BaseHTTPRequestHandler):
                     self.json(guest)
             return
         if path == "/api/session":
-            self.json({"signedIn": self.authenticated()})
+            with db() as connection:
+                account_id = accounts.session_account(connection, self.session_token())
+            self.json({"signedIn": account_id is not None})
             return
-        self.require_host()
         with db() as connection:
+            account_id = self.require_host(connection)
             if path == "/api/events":
-                rows = connection.execute("SELECT id, details FROM events ORDER BY rowid DESC")
+                rows = connection.execute("SELECT id, details FROM events WHERE account_id = ? ORDER BY rowid DESC",
+                                          (account_id,))
                 self.json([dict(id=row["id"], **json.loads(row["details"])) for row in rows])
                 return
             match = re.fullmatch(fr"/api/events/({TOKEN})(/photo)?", path)
             if match:
                 event_id, photo_request = match.groups()
-                event = event_row(connection, event_id)
+                event = event_row(connection, event_id, account_id)
                 if photo_request:
                     if not event["photo"]:
                         raise ClientError("Photo not found.", 404)
@@ -342,13 +354,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
         raise ClientError("Page not found.", 404)
 
-    def require_host(self):
-        if not self.authenticated():
+    def require_host(self, connection):
+        account_id = accounts.session_account(connection, self.session_token())
+        if account_id is None:
             raise ClientError("Sign in to manage invitations.", 401)
+        return account_id
 
     def write_route(self, path, data):
-        if path == "/api/login":
-            self.login(data)
+        if path in {"/api/login", "/api/account/signup", "/api/account/setup",
+                    "/api/account/forgot", "/api/account/reset"}:
+            self.account_route(path, data)
             return
         match = re.fullmatch(fr"/api/guest/({TOKEN}|wedding|birthday)", path)
         if match:
@@ -356,8 +371,9 @@ class Handler(BaseHTTPRequestHandler):
                 save_reply(connection, match[1], data)
             self.json({"ok": True})
             return
-        self.require_host()
         if path == "/api/logout":
+            with db() as connection:
+                accounts.end_session(connection, self.session_token())
             self.json({"ok": True}, headers=[self.cookie("", 0)])
             return
         match = re.fullmatch(fr"/api/events(?:/({TOKEN})(/households)?)?", path)
@@ -365,8 +381,9 @@ class Handler(BaseHTTPRequestHandler):
             raise ClientError("Page not found.", 404)
         event_id, household = match.groups()
         with db() as connection:
+            account_id = self.require_host(connection)
             if event_id:
-                event_row(connection, event_id)
+                event_row(connection, event_id, account_id)
             if household:
                 label = string(data, "household name", 100, True)
                 names = [name.strip() for name in string(data, "guest names", 800, True).splitlines()
@@ -386,13 +403,12 @@ class Handler(BaseHTTPRequestHandler):
                         connection.execute("UPDATE events SET photo = ? WHERE id = ?", (photo, event_id))
                 else:
                     event_id = secrets.token_urlsafe(20)
-                    connection.execute("INSERT INTO events VALUES (?, ?, ?)", (event_id, details, photo))
+                    connection.execute("INSERT INTO events (id, details, photo, account_id) VALUES (?, ?, ?, ?)",
+                                       (event_id, details, photo, account_id))
                 response = {"id": event_id}
         self.json(response)
 
 
 if __name__ == "__main__":
-    if len(PASSWORD) < 16 or PASSWORD != PASSWORD.strip():
-        raise SystemExit("Set INVITES_PASSWORD to at least 16 characters without surrounding whitespace.")
     setup()
     ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "30112"))), Handler).serve_forever()

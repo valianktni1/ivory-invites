@@ -90,14 +90,70 @@ function home() {
   app.append(main);
 }
 
-function showLogin() {
+function showLogin(message = '') {
   app.replaceChildren(header('View demos', '/'));
   const box = el('section', undefined, 'panel login');
-  box.innerHTML = '<h1>Organiser sign in</h1><form><label>Pilot password<input required type="password" autocomplete="current-password" name="password"></label><button type="submit" class="button">Sign in</button><p role="status" class="status"></p></form>';
+  box.innerHTML = `
+    <h1>Organiser sign in</h1>
+    <form>
+      <label>Email address<input required type="email" maxlength="254" autocomplete="username" name="email"></label>
+      <label>Password<input required type="password" maxlength="256" autocomplete="current-password" name="password"></label>
+      <button type="submit" class="button">Sign in</button>
+      <p role="status" class="status"></p>
+    </form>
+    <div class="account-links">
+      <a href="/account/signup">Create an account</a>
+      <a href="/account/forgot">Forgot your password?</a>
+    </div>`;
   app.append(box);
-  wire(box.querySelector('form'), async (data) => {
-    await api('/api/login', {password: data.get('password')});
+  const form = box.querySelector('form');
+  if (message) alert(form, message);
+  wire(form, async (data) => {
+    await api('/api/login', {email: data.get('email'), password: data.get('password')});
     await organiserView();
+  });
+}
+
+function accountPage(path) {
+  app.replaceChildren(header('Organiser sign in', '/editor'));
+  const box = el('section', undefined, 'panel login');
+  const choosing = path.endsWith('/setup') || path.endsWith('/reset');
+  const reset = path.endsWith('/forgot') || path.endsWith('/reset');
+  const title = choosing ? (reset ? 'Reset your password' : 'Choose your password')
+    : (reset ? 'Forgot your password?' : 'Create your account');
+  const token = location.hash.slice(1);
+  if (choosing && !/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    box.append(el('h1', title), el('p', 'Open the full link from your email to continue.'),
+      link('Request a new link', reset ? '/account/forgot' : '/account/signup', 'button'));
+    app.append(box);
+    return;
+  }
+  const instructions = choosing ? 'Enter the email address the link was sent to.'
+    : 'Enter your email address and we’ll send you a link.';
+  box.innerHTML = `
+    <h1>${title}</h1>
+    <p>${instructions}</p>
+    <form>
+      <label>Email address<input required type="email" maxlength="254" autocomplete="username" name="email"></label>
+      ${choosing ? '<label>New password<input required type="password" minlength="8" maxlength="256" autocomplete="new-password" name="password" aria-describedby="password-rules"></label><p id="password-rules" class="muted">Use at least 8 characters, including a special character such as ! or #.</p>' : ''}
+      <button type="submit" class="button">${choosing ? (reset ? 'Save new password' : 'Create account') : 'Email me a link'}</button>
+      <p role="status" class="status"></p>
+    </form>`;
+  app.append(box);
+  const form = box.querySelector('form');
+  wire(form, async (data) => {
+    const details = {email: data.get('email')};
+    if (choosing) Object.assign(details, {token, password: data.get('password')});
+    await api('/api' + path, details);
+    if (!choosing) {
+      alert(form, reset ? 'If an account exists for that address, a reset link will be emailed to you.'
+        : 'If that address can be registered, a sign-up link will be emailed to you. Check your inbox and junk folder.');
+    } else if (reset) {
+      history.replaceState(null, '', '/editor');
+      showLogin('Password updated. Sign in with your new password.');
+    } else {
+      location.replace('/editor');
+    }
   });
 }
 
@@ -495,6 +551,8 @@ async function start() {
     const path = location.pathname;
     if (path.startsWith('/demo/') || path.startsWith('/invite/')) {
       await guestView(path.split('/')[2]);
+    } else if (path.startsWith('/account/')) {
+      accountPage(path);
     } else if (path === '/editor') {
       const session = await api('/api/session');
       if (session.signedIn) await organiserView();

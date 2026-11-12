@@ -1,6 +1,6 @@
 # Ivory Invites pilot
 
-The pilot includes two interactive public demos and a password-protected organiser workspace. The organiser can edit the invitation, set a photo and accent colour, create household links, and collect individual RSVPs, optional meal choices and a song request. Real replies and uploaded photos are stored in SQLite.
+The pilot includes two interactive public demos and a workspace for each organiser account. Organisers can edit their invitations, create household links and collect RSVPs, meal choices and song requests. Invitations, uploaded photos and replies are stored in SQLite.
 
 ## Run on TrueNAS
 
@@ -9,7 +9,7 @@ The pilot includes two interactive public demos and a password-protected organis
 | Git checkout and local deployment settings | `/mnt/apps/invites-ivorydigital` |
 | SQLite database, uploaded photos and RSVP replies | `/mnt/photographers_data/invites-ivoryclient` |
 
-1. In the TrueNAS shell, clone the private repository into the existing app dataset. This command expects the app dataset to be empty. If it already contains this checkout, run `git pull --ff-only` from that directory.
+1. In the TrueNAS shell, clone the repository into the existing app dataset. This command expects the app dataset to be empty. If it already contains this checkout, run `git pull --ff-only` from that directory.
 
    ```sh
    git clone https://github.com/valianktni1/ivory-invites.git /mnt/apps/invites-ivorydigital
@@ -30,9 +30,29 @@ The pilot includes two interactive public demos and a password-protected organis
    chmod 600 .env
    ```
 
-   Edit `.env` and set a strong, unique `INVITES_PASSWORD` of at least 16 characters. On an existing checkout, check that `INVITES_PORT=30012`, `PUBLIC_ORIGIN=https://invites.ivorydigital.uk` and `INVITES_DATA_PATH=/mnt/photographers_data/invites-ivoryclient` are set in `.env`. If an earlier pilot already has data, stop it and copy its database files into the new dataset before switching the mount. Keep the original copy until you verify the data in the app.
+   On an existing checkout, keep the current `.env` with your public URL, port and client-data path. You can remove the old `INVITES_PASSWORD` line. Existing pilot invitations will be linked to the verified `INVITES_OWNER_EMAIL` account when it is created. The default is `admin@ivorydigital.uk`. Existing guest links and replies are carried over.
 
-4. Validate the configuration, build the app and check that the container starts.
+4. From the app directory, run the following as root. When prompted, enter the mailbox password for `admin@ivorydigital.uk`. The shell hides what you type. The app defaults to Hostinger SMTP with implicit TLS on port `465`. If you use a different mail provider with implicit TLS, set `INVITES_SMTP_HOST` and `INVITES_SMTP_PORT` in `.env`.
+
+   ```sh
+   bash -c '
+   set -eu
+   umask 077
+   read -r -s -p "Mailbox password for admin@ivorydigital.uk: " password
+   printf "\n"
+   test -n "$password"
+   temp=$(mktemp .smtp-password.XXXXXX)
+   cleanup() { rm -f -- "$temp"; }
+   trap cleanup EXIT
+   printf "%s\n" "$password" > "$temp"
+   unset password
+   chown 10001:10001 "$temp"
+   chmod 0400 "$temp"
+   mv -f -- "$temp" .smtp-password
+   '
+   ```
+
+5. Validate the configuration, build the app and check that the container starts.
 
    ```sh
    docker compose config --quiet &&
@@ -40,18 +60,18 @@ The pilot includes two interactive public demos and a password-protected organis
      docker compose ps
    ```
 
-5. The existing Nginx Proxy Manager host for `invites.ivorydigital.uk` should forward HTTP to the TrueNAS LAN address on port `30012` and serve HTTPS to visitors. Check `https://invites.ivorydigital.uk/health` for a successful response, then visit `/editor` to create a test event. After a guest replies, reopen the event or refresh and select it to see the reply.
+6. The existing Nginx Proxy Manager host for `invites.ivorydigital.uk` should forward HTTP to the TrueNAS LAN address on port `30012` and serve HTTPS to visitors. At `/editor`, choose **Create an account** and enter the owner email to claim your pilot invitations. Open the email link, enter the same email address and choose a password with at least eight characters and one special character. Try creating a second account with a separate email address to verify its dashboard starts empty.
 
-The app currently uses a single organiser password. Each generated household link can be opened and used to RSVP by whoever holds the link. Send each link to the intended household. Demo replies are discarded. Payment, the wedding planner connection and the occasion landing pages are separate milestones.
+If the sign-up email does not arrive, check your junk folder and run `docker compose logs --tail=50 invites` for mail delivery errors. Each generated household link can be opened and used to RSVP by whoever holds the link. Send each link to the intended household. Demo replies are discarded. Payment, the wedding planner connection and the occasion landing pages are separate milestones.
 
 To back up, stop the app with `docker compose stop`, copy `/mnt/photographers_data/invites-ivoryclient` to your backup location, then run `docker compose start`. Uploaded photos are inside the same database. The database and data directory should have the same permissions after a restore.
 
 ## Run locally for development
 
-Use Python 3.11 or newer with the system's time-zone database installed. For example, on Linux:
+Use Python 3.11 or newer with the system's time-zone database installed.
 
 ```sh
-INVITES_PASSWORD="$(openssl rand -hex 24)" python3 app.py
+python3 app.py
 ```
 
-For manual sign-in, generate and keep a password in your shell first, then start the app with that value. Open `http://localhost:30112`.
+Open `http://localhost:30112`. To enable account emails, set `INVITES_SMTP_PASSWORD_FILE` to a local file containing the sender mailbox password.

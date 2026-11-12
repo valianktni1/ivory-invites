@@ -7,8 +7,13 @@ services:
     ports:
       - "${INVITES_PORT:-30012}:8080"
     environment:
-      INVITES_PASSWORD: "${INVITES_PASSWORD:?Set the pilot password in .env}"
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:?Set the HTTPS address in .env}"
+      INVITES_OWNER_EMAIL: "${INVITES_OWNER_EMAIL:-admin@ivorydigital.uk}"
+      INVITES_SMTP_HOST: "${INVITES_SMTP_HOST:-smtp.hostinger.com}"
+      INVITES_SMTP_PORT: "${INVITES_SMTP_PORT:-465}"
+      INVITES_SMTP_PASSWORD_FILE: /run/secrets/invites_smtp_password
+    secrets:
+      - invites_smtp_password
     volumes:
       - type: bind
         source: "${INVITES_DATA_PATH:?Set the client-data dataset path in .env}"
@@ -21,3 +26,6 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+secrets:
+  invites_smtp_password:
+    file: ./.smtp-password
