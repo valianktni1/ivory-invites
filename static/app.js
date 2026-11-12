@@ -2,13 +2,20 @@
 
 const app = document.querySelector('#app');
 const designs = {
-  wedding: {name: 'Country house wedding', title: 'Amelia & Oliver', intro: 'Together with their families',
+  wedding: {category: 'Weddings', name: 'Country house wedding', title: 'Amelia & Oliver', intro: 'Together with their families',
     colour: '#4c5631', artwork: 'A country house framed by garden flowers'},
-  birthday: {name: 'Dinosaur birthday', title: 'Leo turns 6!', intro: "You're invited",
+  birthday: {category: 'Birthdays', name: 'Dinosaur birthday', title: 'Leo turns 6!', intro: "You're invited",
     colour: '#315238', artwork: 'Two painted dinosaurs among ferns'},
-  'black-tie': {name: 'Black-tie wedding', title: 'Thea & Rowan', intro: 'Together with their families', colour: '#34352f'},
-  disco: {name: 'Disco birthday', title: 'Frankie turns 30', intro: "You're invited", colour: '#673584'}
+  'black-tie': {category: 'Weddings', name: 'Black-tie wedding', title: 'Thea & Rowan',
+    intro: 'Together with their families', colour: '#34352f'},
+  disco: {category: 'Birthdays', name: 'Disco birthday', title: 'Frankie turns 30',
+    intro: "You're invited", colour: '#673584'}
 };
+const designCategories = new Map();
+for (const [key, design] of Object.entries(designs)) {
+  if (!designCategories.has(design.category)) designCategories.set(design.category, []);
+  designCategories.get(design.category).push([key, design]);
+}
 let photoUpdate = null;
 let photoRemoved = false;
 let session = {};
@@ -353,16 +360,20 @@ function templatePicker() {
   const page = el('section', undefined, 'organiser-page');
   const heading = el('div', undefined, 'organiser-heading');
   heading.append(el('h1', 'Choose a template'));
-  const cards = el('div', undefined, 'cards');
-  for (const [key, design] of Object.entries(designs)) {
-    const card = link(undefined, '/editor?new=' + key, 'design-card');
-    const copy = el('div', undefined, 'design-info');
-    copy.append(el('p', design.name, 'eyebrow'), el('h2', design.title),
-      el('span', 'Use this template →', 'design-action'));
-    card.append(templateArtwork(key), copy);
-    cards.append(card);
+  page.append(heading);
+  for (const [category, templates] of designCategories) {
+    const section = el('section', undefined, 'template-category');
+    const cards = el('div', undefined, 'cards');
+    for (const [key, design] of templates) {
+      const card = link(undefined, '/editor?new=' + key, 'design-card');
+      const copy = el('div', undefined, 'design-info');
+      copy.append(el('h3', design.name), el('span', 'Use this template →', 'design-action'));
+      card.append(templateArtwork(key), copy);
+      cards.append(card);
+    }
+    section.append(el('h2', category), cards);
+    page.append(section);
   }
-  page.append(heading, cards);
   app.replaceChildren(organiserHeader(), page);
 }
 
@@ -413,10 +424,15 @@ async function editor(id, template = 'wedding') {
       <button type="submit" class="button">Save invitation</button><p role="status" class="status"></p>
     </form>`;
   const form = section.querySelector('form');
-  for (const [key, design] of Object.entries(designs)) {
-    const option = el('option', design.name);
-    option.value = key;
-    form.elements.template.append(option);
+  for (const [category, templates] of designCategories) {
+    const group = el('optgroup');
+    group.label = category;
+    for (const [key, design] of templates) {
+      const option = el('option', design.name);
+      option.value = key;
+      group.append(option);
+    }
+    form.elements.template.append(group);
   }
   const preview = el('div', undefined, 'editor-preview');
   const previewTitle = el('strong');

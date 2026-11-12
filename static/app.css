@@ -42,6 +42,8 @@ button:disabled { cursor: wait; opacity: .7; }
 .design-card:hover { transform: translateY(-3px); }
 .design-card img { width: 100%; aspect-ratio: 1.8; object-fit: cover; display: block; }
 .design-info { padding: clamp(1.1rem, 3vw, 1.65rem); display: grid; gap: .45rem; }
+.template-category { margin-bottom: clamp(1.6rem, 5vw, 3rem); }
+.template-category h2 { margin-bottom: .85rem; }
 .design-action { color: var(--accent); text-decoration: underline; text-underline-offset: .22em; font-size: .93rem; }
 .panel { background: var(--light); border: 1px solid var(--line); padding: clamp(1rem, 3.4vw, 1.8rem); }
 .panel h1 { font-size: clamp(1.9rem, 5vw, 2.8rem); margin-bottom: 1.15rem; }
