@@ -26,6 +26,14 @@ SECURE = ORIGIN.startswith("https://")
 MAIL_WORKERS = ThreadPoolExecutor(max_workers=2)
 MAIL_SLOTS = threading.BoundedSemaphore(10)
 TOKEN = r"[A-Za-z0-9_-]{20,64}"
+
+
+def wedding_demo(title, date, time, venue, colour, message, dress="", travel=""):
+    return dict(title=title, intro="Together with their families", date=date, time=time,
+                venue=venue, colour=colour, message=message, dress=dress, travel=travel,
+                meal="Roast chicken\nWild mushroom risotto", song=True)
+
+
 TEMPLATES = {
     "wedding": dict(title="Amelia & Oliver", intro="Together with their families",
                     date="2027-06-19", time="14:00", venue="A country house in Cheshire",
@@ -42,10 +50,26 @@ TEMPLATES = {
                   time="19:30", venue="The Glitter Room", colour="#673584",
                   message="Come for a drink, stay for a dance. A little sparkle is very welcome.",
                   meal="", song=True),
+    "letterpress": wedding_demo("Clara & James", "2027-06-12", "14:00", "The Orangery", "#7a503d",
+                               "Please join us for our wedding, followed by dinner and dancing.",
+                               "Lounge suits and summer dresses.", "Guest parking is available at the venue."),
+    "botanical": wedding_demo("Isabel & Noah", "2027-05-22", "13:30", "The Walled Garden", "#385041",
+                             "Join us for a garden ceremony and a late lunch with our favourite people.",
+                             "Garden party attire. The ceremony is on grass."),
+    "deco": wedding_demo("Vivienne & Arthur", "2027-10-09", "16:30", "The Grand Ballroom", "#68433d",
+                        "Dinner, dancing and a toast to the two of us.", "Black tie."),
+    "something-blue": wedding_demo("Florence & George", "2027-09-04", "14:00", "The Manor House, Cheshire",
+                                  "#315273", "Join us for our wedding and a celebration in the gardens.",
+                                  "Lounge suits and dresses.", "There is guest parking at the manor house."),
+    "silver": wedding_demo("Alice & Morgan", "2027-08-14", "15:00", "The Town Hall", "#343431",
+                          "Meet us at the town hall, then join us for dinner and dancing in the city."),
+    "winter": wedding_demo("Eleanor & Theo", "2027-12-11", "15:30", "The Winter Conservatory", "#633646",
+                          "Join us for a candlelit ceremony, a winter feast and dancing.", "Winter formal."),
 }
 DEMO_KEYS = "|".join(re.escape(key) for key in TEMPLATES)
 STATIC_TYPES = {"app.css": "text/css; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
-                "wedding.webp": "image/webp", "birthday.webp": "image/webp"}
+                **{f"{key}.webp": "image/webp" for key in ("wedding", "birthday", "botanical", "something-blue", "silver")},
+                "cormorantgaramond.woff2": "font/woff2", "dmsans.woff2": "font/woff2"}
 HOST_PAGES = {"/", "/editor", "/admin", "/admin/mail", "/admin/mail-setup",
               "/account/signup", "/account/setup", "/account/forgot", "/account/reset"}
 UK = ZoneInfo("Europe/London")
@@ -116,6 +140,7 @@ def event_details(data):
     return dict(template=template, colour=colour, date=day, time=clock,
                 title=string(data, "title", 90, True), intro=string(data, "intro", 90),
                 venue=string(data, "venue", 180, True), message=string(data, "message", 1200),
+                dress=string(data, "dress", 180), travel=string(data, "travel", 500),
                 meal="\n".join(line.strip() for line in string(data, "meal", 500).splitlines() if line.strip()),
                 song=data.get("song") is True)
 
@@ -161,7 +186,7 @@ def guest_row(connection, token):
 def guest_details(connection, token):
     if token in TEMPLATES:
         return dict(event=dict(TEMPLATES[token], template=token), demo=True,
-                    label="The Smith family" if token in {"wedding", "black-tie"} else "Sam & Jamie",
+                    label="Sam & Jamie" if token in {"birthday", "disco"} else "The Smith family",
                     names=["Sam", "Jamie"], answered=False)
     row = guest_row(connection, token)
     return dict(event=json.loads(row["details"]), demo=False, label=row["label"],

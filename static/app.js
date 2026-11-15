@@ -9,10 +9,26 @@ const designs = {
   'black-tie': {category: 'Weddings', name: 'Black-tie wedding', title: 'Thea & Rowan',
     intro: 'Together with their families', colour: '#34352f'},
   disco: {category: 'Birthdays', name: 'Disco birthday', title: 'Frankie turns 30',
-    intro: "You're invited", colour: '#673584'}
+    intro: "You're invited", colour: '#673584'},
+  letterpress: {category: 'Weddings', suite: true, name: 'Ivory Letterpress', title: 'Clara & James',
+    description: 'Embossed ivory with a classic monogram', colour: '#7a503d'},
+  botanical: {category: 'Weddings', suite: true, name: 'The Walled Garden', title: 'Isabel & Noah',
+    description: 'English garden watercolours', colour: '#385041', artwork: 'Watercolour anemones and ferns'},
+  deco: {category: 'Weddings', suite: true, name: 'The Gilded Age', title: 'Vivienne & Arthur',
+    description: 'Art Deco lines and warm gold', colour: '#68433d'},
+  'something-blue': {category: 'Weddings', suite: true, name: 'Something Blue', title: 'Florence & George',
+    description: 'A blue silk bow with delicate English flowers', colour: '#315273',
+    artwork: 'A watercolour blue ribbon with delicate flowers'},
+  silver: {category: 'Weddings', suite: true, name: 'Silver Gelatin', title: 'Alice & Morgan',
+    description: 'Black-and-white photography with magazine typography', colour: '#343431',
+    artwork: 'Illustrative black-and-white wedding photograph'},
+  winter: {category: 'Weddings', suite: true, name: 'Winter Conservatory', title: 'Eleanor & Theo',
+    description: 'Mulberry velvet tones and a champagne border', colour: '#633646'}
 };
 const designCategories = new Map();
-for (const [key, design] of Object.entries(designs)) {
+const designEntries = Object.entries(designs).sort((a, b) => Boolean(b[1].suite) - Boolean(a[1].suite));
+for (const [key, design] of designEntries) {
+  if (design.suite) design.intro = 'Together with their families';
   if (!designCategories.has(design.category)) designCategories.set(design.category, []);
   designCategories.get(design.category).push([key, design]);
 }
@@ -48,6 +64,50 @@ function templateArtwork(key, photo = '') {
   return art;
 }
 
+function initialsFor(title) {
+  return title.split(/\s*(?:&|\+|\band\b)\s*/i).slice(0, 2)
+    .map(name => name.trim().match(/\p{L}/u)?.[0] || '').filter(Boolean).join(' & ')
+    .toLocaleUpperCase('en-GB');
+}
+
+function applyPalette(section, colour) {
+  section.style.setProperty('--accent', readableAccent(colour));
+  section.style.setProperty('--chosen', colour);
+}
+
+function stationery(event, photo, heading = 'h1') {
+  const design = designs[event.template];
+  const card = el('div', undefined, 'stationery ' + event.template);
+  if (photo || design.artwork) {
+    const image = templateArtwork(event.template, photo);
+    image.className = 'stationery-photo';
+    card.append(image);
+  }
+  const copy = el('div', undefined, 'stationery-copy');
+  if (event.template === 'letterpress' || event.template === 'winter') {
+    const monogram = el('span', initialsFor(event.title), 'monogram');
+    monogram.setAttribute('aria-hidden', 'true');
+    copy.append(monogram);
+  }
+  if (event.intro) copy.append(el('p', event.intro, 'stationery-intro'));
+  copy.append(el(heading, event.title, 'stationery-title'));
+  if (event.date) copy.append(el('p', dateText(event), 'stationery-date'));
+  if (event.venue) copy.append(el('p', event.venue, 'stationery-venue'));
+  card.append(copy);
+  return card;
+}
+
+function galleryArtwork(key) {
+  const design = designs[key];
+  if (!design.suite) return templateArtwork(key);
+  const stage = el('div', undefined, 'stationery-stage ' + key);
+  stage.setAttribute('aria-hidden', 'true');
+  stage.append(stationery({template: key, title: design.title, intro: 'The wedding of'}, '', 'strong'));
+  const image = stage.querySelector('img');
+  if (image) image.loading = 'lazy';
+  return stage;
+}
+
 async function api(path, data) {
   const options = data === undefined ? {} : {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
@@ -69,6 +129,7 @@ function header(label, href) {
 }
 
 function dateText(event) {
+  if (!event.date) return '';
   const day = new Intl.DateTimeFormat('en-GB', {dateStyle: 'full', timeZone: 'UTC'}).format(
     new Date(event.date + 'T12:00:00Z'));
   return event.time ? day + ' at ' + event.time : day;
@@ -97,21 +158,43 @@ function wire(form, handler) {
 function home() {
   app.replaceChildren(header('Organiser sign in', '/editor'));
   const main = el('section', undefined, 'showcase');
-  const copy = el('div', undefined, 'hero');
-  copy.append(el('p', 'DIGITAL INVITATIONS', 'eyebrow'),
-    el('h1', 'An invitation worth opening.'),
-    el('p', 'Try an invitation as a guest and see how the RSVP works.', 'lede'));
-  main.append(copy);
-  const cards = el('div', undefined, 'cards');
-  for (const [key, design] of Object.entries(designs)) {
-    const card = link(undefined, '/demo/' + key, 'design-card ' + key);
-    const info = el('div', undefined, 'design-info');
-    info.append(el('p', design.name, 'eyebrow'), el('h2', design.title), el('span', 'Open demo →', 'design-action'));
-    card.append(templateArtwork(key), info);
-    cards.append(card);
-  }
-  main.append(cards);
+  const hero = el('div', undefined, 'hero');
+  const copy = el('div', undefined, 'hero-copy');
+  copy.append(el('h1', 'Wedding invitations worth opening.'),
+    el('p', 'Choose your stationery, send a personal link and collect replies, meal choices and song requests in one place.', 'lede'));
+  const actions = el('div', undefined, 'actions');
+  actions.append(link('Explore wedding designs', '#weddings', 'button'),
+    link('Try a guest invitation', '/demo/letterpress', 'button secondary'));
+  copy.append(actions);
+  const composition = el('div', undefined, 'hero-art');
+  composition.setAttribute('aria-hidden', 'true');
+  composition.append(galleryArtwork('botanical'), galleryArtwork('letterpress'));
+  composition.querySelector('img').loading = 'eager';
+  hero.append(copy, composition);
+  main.append(hero, designGallery(false));
   app.append(main);
+}
+
+function designGallery(editing) {
+  const gallery = el('div', undefined, 'design-gallery');
+  for (const [category, templates] of designCategories) {
+    const section = el('section', undefined, 'template-category');
+    section.id = category.toLowerCase();
+    const cards = el('div', undefined, 'cards');
+    for (const [key, design] of templates) {
+      const href = (editing ? '/editor?new=' : '/demo/') + key;
+      const card = link(undefined, href, 'design-card');
+      const copy = el('div', undefined, 'design-info');
+      copy.append(el('h3', design.name));
+      if (design.description) copy.append(el('p', design.description, 'muted'));
+      copy.append(el('span', editing ? 'Use this design →' : 'Open invitation →', 'design-action'));
+      card.append(galleryArtwork(key), copy);
+      cards.append(card);
+    }
+    section.append(el('h2', category === 'Weddings' ? 'Wedding collection' : category), cards);
+    gallery.append(section);
+  }
+  return gallery;
 }
 
 function showLogin(message = '') {
@@ -359,21 +442,8 @@ async function dashboard() {
 function templatePicker() {
   const page = el('section', undefined, 'organiser-page');
   const heading = el('div', undefined, 'organiser-heading');
-  heading.append(el('h1', 'Choose a template'));
-  page.append(heading);
-  for (const [category, templates] of designCategories) {
-    const section = el('section', undefined, 'template-category');
-    const cards = el('div', undefined, 'cards');
-    for (const [key, design] of templates) {
-      const card = link(undefined, '/editor?new=' + key, 'design-card');
-      const copy = el('div', undefined, 'design-info');
-      copy.append(el('h3', design.name), el('span', 'Use this template →', 'design-action'));
-      card.append(templateArtwork(key), copy);
-      cards.append(card);
-    }
-    section.append(el('h2', category), cards);
-    page.append(section);
-  }
+  heading.append(el('h1', 'Choose your design'));
+  page.append(heading, designGallery(true));
   app.replaceChildren(organiserHeader(), page);
 }
 
@@ -397,6 +467,7 @@ async function editor(id, template = 'wedding') {
   const heading = el('div', undefined, 'organiser-heading');
   heading.append(el('h1', id ? 'Edit invitation' : 'Create an invitation'));
   const shortcuts = el('div', undefined, 'actions');
+  shortcuts.append(link('Live preview', '#live-preview', 'button secondary mobile-preview-link'));
   if (id) {
     shortcuts.append(link('Preview invitation', '/editor?preview=' + encodeURIComponent(id), 'button secondary'));
     if (selected.canShare) shortcuts.append(link('Guest links and replies', '#replies', 'button secondary'));
@@ -409,7 +480,10 @@ async function editor(id, template = 'wedding') {
   const section = el('section', undefined, 'panel');
   section.innerHTML = `
     <form id="event-form">
-      <label>Design<select name="template"></select></label>
+      <div class="form-field">
+        <label for="invitation-design">Design</label>
+        <select id="invitation-design" name="template"></select>
+      </div>
       <div class="fields"><label>Invitation title<input name="title" required maxlength="90"></label>
       <label>Opening line<input name="intro" maxlength="90"></label></div>
       <div class="fields"><label>Date<input type="date" name="date" required></label>
@@ -418,7 +492,12 @@ async function editor(id, template = 'wedding') {
       <label>Message<textarea name="message" rows="3" maxlength="1200"></textarea></label>
       <div class="fields"><label>Accent colour<input type="color" name="colour"></label>
       <label>Photo (optional)<input type="file" accept="image/*" name="photo"></label></div>
-      <button class="quiet" type="button" id="remove-photo" hidden>Use design artwork</button>
+      <button class="quiet" type="button" id="remove-photo" hidden>Remove uploaded photo</button>
+      <details class="event-options">
+        <summary>Dress code and travel</summary>
+        <label>Dress code (optional)<input name="dress" maxlength="180"></label>
+        <label>Travel, parking or accommodation (optional)<textarea name="travel" rows="3" maxlength="500"></textarea></label>
+      </details>
       <label>Meal choices (optional, one per line)<textarea name="meal" rows="2" maxlength="500"></textarea></label>
       <label class="check"><input type="checkbox" name="song"> Ask for a song request</label>
       <button type="submit" class="button">Save invitation</button><p role="status" class="status"></p>
@@ -434,35 +513,42 @@ async function editor(id, template = 'wedding') {
     }
     form.elements.template.append(group);
   }
+  const aside = el('aside', undefined, 'preview-panel');
+  aside.id = 'live-preview';
   const preview = el('div', undefined, 'editor-preview');
-  const previewTitle = el('strong');
-  form.querySelector('#remove-photo').after(preview);
+  aside.append(el('h2', 'Live preview'), preview,
+    link('Back to editing', '#event-form', 'button secondary mobile-preview-link'));
   const remove = form.querySelector('#remove-photo');
   const defaults = selected || {template, ...designs[template]};
-  for (const field of ['template', 'title', 'intro', 'date', 'time', 'venue', 'message', 'colour', 'meal']) {
+  for (const field of ['template', 'title', 'intro', 'date', 'time', 'venue', 'message', 'colour', 'dress', 'travel', 'meal']) {
     form.elements[field].value = defaults[field] || '';
   }
   form.elements.song.checked = Boolean(defaults.song);
+  form.querySelector('.event-options').open = Boolean(defaults.dress || defaults.travel);
   function drawPreview() {
     const photo = photoUpdate ? 'data:image/jpeg;base64,' + photoUpdate
       : (selected?.hasPhoto && !photoRemoved ? '/api/events/' + id + '/photo' : '');
-    preview.replaceChildren(templateArtwork(form.elements.template.value, photo), previewTitle);
-    previewTitle.textContent = form.elements.title.value;
-    previewTitle.style.color = readableAccent(form.elements.colour.value);
+    const event = Object.fromEntries(new FormData(form));
+    event.title ||= 'Invitation title';
+    preview.replaceChildren(invitationCard(event, photo, {heading: 'h3'}));
     remove.hidden = !photo;
   }
+  let previousDesign = designs[form.elements.template.value];
   form.elements.template.addEventListener('change', () => {
     const design = designs[form.elements.template.value];
-    const previous = Object.values(designs).find((item) => item.title === form.elements.title.value);
-    if (!form.elements.title.value || previous) form.elements.title.value = design.title;
-    if (!form.elements.intro.value || Object.values(designs).some((item) => item.intro === form.elements.intro.value)) {
+    if (!id && form.elements.title.value === previousDesign.title) form.elements.title.value = design.title;
+    if (!id && form.elements.intro.value === previousDesign.intro) {
       form.elements.intro.value = design.intro;
     }
-    form.elements.colour.value = design.colour;
+    if (form.elements.colour.value === previousDesign.colour) form.elements.colour.value = design.colour;
+    previousDesign = design;
     drawPreview();
   });
-  form.elements.title.addEventListener('input', drawPreview);
-  form.elements.colour.addEventListener('input', drawPreview);
+  form.addEventListener('input', ({target}) => {
+    if (['title', 'intro', 'date', 'time', 'venue', 'message', 'colour', 'dress', 'travel'].includes(target.name)) {
+      drawPreview();
+    }
+  });
   form.elements.photo.addEventListener('change', async () => {
     const file = form.elements.photo.files[0];
     if (!file) return;
@@ -496,7 +582,9 @@ async function editor(id, template = 'wedding') {
     await editor(saved.id);
     alert(document.querySelector('#event-form'), 'Invitation saved.');
   });
-  work.append(section);
+  const layout = el('div', undefined, 'editor-layout');
+  layout.append(section, aside);
+  work.append(layout);
   if (selected?.canShare) work.append(households(selected));
   app.replaceChildren(organiserHeader(), work);
 }
@@ -597,27 +685,24 @@ async function guestView(token, preview = false) {
   const event = guest.event;
   document.title = event.title + ' · Ivory Invites';
   const page = el('div', undefined, 'guest-page ' + event.template);
-  page.style.setProperty('--accent', readableAccent(event.colour));
-  page.style.setProperty('--chosen', event.colour);
+  applyPalette(page, event.colour);
   const shell = el('section', undefined, 'opening');
   const opener = el('button', undefined, 'opener');
   opener.setAttribute('aria-label', 'Open invitation');
   const template = event.template;
   const opening = {
-    wedding: ['envelope', 'Tap the wax seal to open'],
     birthday: ['egg', 'Tap the egg to hatch it'],
     'black-tie': ['ballroom-doors', 'Tap to open the ballroom doors'],
     disco: ['disco-orb', 'Tap to light up the disco ball']
-  }[template];
+  }[template] || ['envelope', 'Open invitation'];
   const decoration = el('span', undefined, opening[0]);
   decoration.setAttribute('aria-hidden', 'true');
-  if (template === 'wedding') {
-    const initials = event.title.split(/\s*(?:&|\+|\band\b)\s*/i).slice(0, 2)
-      .map(name => name.trim().match(/\p{L}/u)?.[0] || '').filter(Boolean).join(' & ');
+  if (opening[0] === 'envelope') {
+    const initials = initialsFor(event.title);
     const letter = el('span', undefined, 'envelope-letter');
-    letter.append(el('span', initials.toLocaleUpperCase('en-GB')));
+    letter.append(el('span', initials));
     const seal = el('span', undefined, 'wax-seal');
-    seal.append(el('span', initials.toLocaleUpperCase('en-GB') || '✦'));
+    seal.append(el('span', initials || '✦'));
     decoration.append(letter, el('span', undefined, 'envelope-front'),
       el('span', undefined, 'envelope-flap'), seal);
   } else if (template === 'birthday') {
@@ -630,36 +715,12 @@ async function guestView(token, preview = false) {
     decoration.append(el('span', undefined, 'disco-sphere'), el('span', '✦', 'disco-spark spark-one'),
       el('span', '✧', 'disco-spark spark-two'));
   }
-  opener.append(decoration);
-  shell.append(el('p', 'AN INVITATION FOR', 'eyebrow'), el('h1', guest.label), opener,
-    el('p', opening[1], 'opening-hint'));
-  const card = el('article', undefined, 'invite-card');
+  opener.append(decoration, el('span', opening[1], 'opening-hint'));
+  shell.append(el('p', 'An invitation for', 'eyebrow'), el('h1', guest.label), opener);
+  const card = invitationCard(event, guest.photo, preview ? {} : {token, guest});
   card.hidden = true;
-  const cover = el('div', undefined, 'cover-copy');
-  if (event.intro) cover.append(el('p', event.intro, 'eyebrow'));
-  const title = el('h1', event.title);
+  const title = card.querySelector('h1');
   title.tabIndex = -1;
-  cover.append(title);
-  if (template === 'wedding' || template === 'black-tie') cover.append(el('span', undefined, 'cover-rule'));
-  const details = el('section', undefined, 'invite-details');
-  details.append(el('p', dateText(event), 'event-date'), el('p', event.venue, 'venue'));
-  if (event.message) details.append(el('p', event.message, 'event-message'));
-  const actions = el('div', undefined, 'actions');
-  const map = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(event.venue);
-  if (!preview) {
-    actions.append(link('RSVP', '#rsvp', 'button'));
-    if (!guest.demo) actions.append(link('Directions', map, 'button secondary'));
-    actions.append(link('Add to calendar', '/calendar/' + token, 'button secondary'));
-    details.append(actions);
-  }
-  card.append(cover);
-  if (guest.photo || designs[template].artwork) {
-    const image = templateArtwork(template, guest.photo);
-    image.className = 'cover-image';
-    card.append(image);
-  }
-  card.append(details);
-  if (!preview) card.append(replyForm(token, guest));
   function open() {
     opener.disabled = true;
     shell.classList.add('unsealing');
@@ -667,7 +728,7 @@ async function guestView(token, preview = false) {
     window.setTimeout(() => {
       shell.hidden = true;
       card.hidden = false;
-      title.focus({preventScroll: true});
+      title.focus();
     }, duration);
   }
   opener.addEventListener('click', open);
@@ -675,6 +736,50 @@ async function guestView(token, preview = false) {
   if (preview) page.append(header('Back to editor', invitationUrl(token)));
   page.append(shell, card);
   app.replaceChildren(page);
+}
+
+function invitationCard(event, photo, {heading = 'h1', token, guest} = {}) {
+  const {template} = event;
+  const design = designs[template];
+  const card = el('article', undefined, 'invite-card ' + template + (design.suite ? ' suite-card' : ''));
+  applyPalette(card, event.colour);
+  const details = el('div', undefined, 'invite-details');
+  if (design.suite) {
+    card.append(stationery(event, photo, heading));
+  } else {
+    const cover = el('div', undefined, 'cover-copy');
+    if (event.intro) cover.append(el('p', event.intro, 'eyebrow'));
+    cover.append(el(heading, event.title));
+    if (design.category === 'Weddings') cover.append(el('span', undefined, 'cover-rule'));
+    card.append(cover);
+    if (photo || design.artwork) {
+      const image = templateArtwork(template, photo);
+      image.className = 'cover-image';
+      card.append(image);
+    }
+    if (event.date) details.append(el('p', dateText(event), 'event-date'));
+    if (event.venue) details.append(el('p', event.venue, 'venue'));
+  }
+  if (event.message) details.append(el('p', event.message, 'event-message'));
+  if (event.dress || event.travel) {
+    const notes = el('dl', undefined, 'event-notes');
+    if (event.dress) notes.append(el('dt', 'Dress code'), el('dd', event.dress));
+    if (event.travel) notes.append(el('dt', 'Travel and accommodation'), el('dd', event.travel));
+    details.append(notes);
+  }
+  if (guest) {
+    const actions = el('div', undefined, 'actions');
+    actions.append(link('RSVP', '#rsvp', 'button'));
+    if (!guest.demo) {
+      const map = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(event.venue);
+      actions.append(link('Directions', map, 'button secondary'));
+    }
+    actions.append(link('Add to calendar', '/calendar/' + token, 'button secondary'));
+    details.append(actions);
+  }
+  if (details.childElementCount) card.append(details);
+  if (guest) card.append(replyForm(token, guest));
+  return card;
 }
 
 function replyForm(token, guest) {

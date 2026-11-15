@@ -1,6 +1,6 @@
 # Ivory Invites pilot
 
-The pilot includes two interactive public demos and a workspace for each organiser account. Organisers can edit their invitations, create household links and collect RSVPs, meal choices and song requests. Invitations, uploaded photos and replies are stored in SQLite.
+Ivory Invites includes interactive wedding and birthday demos and a workspace for each organiser account. Organisers can choose a design, preview and edit their invitation, create household links and collect RSVPs, meal choices and song requests. Invitations, uploaded photos and replies are stored in SQLite.
 
 ## Run on TrueNAS
 
