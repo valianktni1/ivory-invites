@@ -75,6 +75,15 @@ function applyPalette(section, colour) {
   section.style.setProperty('--chosen', colour);
 }
 
+function applyStationeryColours(card, colours) {
+  if (!colours) return;
+  const [paper, ink, trim] = colours;
+  card.classList.add('has-stationery-palette');
+  card.style.setProperty('--suite-paper', paper);
+  card.style.setProperty('--suite-ink', ink);
+  card.style.setProperty('--suite-trim', trim);
+}
+
 function stationery(event, photo, heading = 'h1') {
   const design = designs[event.template];
   const card = el('div', undefined, 'stationery ' + event.template);
@@ -161,7 +170,7 @@ function home() {
   const hero = el('div', undefined, 'hero');
   const copy = el('div', undefined, 'hero-copy');
   copy.append(el('h1', 'Wedding invitations worth opening.'),
-    el('p', 'Choose your stationery, send a personal link and collect replies, meal choices and song requests in one place.', 'lede'));
+    el('p', 'Create nine matching stationery pieces, send personal invitation links and collect guest replies in one place.', 'lede'));
   const actions = el('div', undefined, 'actions');
   actions.append(link('Explore wedding designs', '#weddings', 'button'),
     link('Try a guest invitation', '/demo/letterpress', 'button secondary'));
@@ -189,7 +198,9 @@ function designGallery(editing) {
       if (design.description) copy.append(el('p', design.description, 'muted'));
       copy.append(el('span', editing ? 'Use this design →' : 'Open invitation →', 'design-action'));
       card.append(galleryArtwork(key), copy);
-      cards.append(card);
+      const tile = el('div', undefined, 'design-tile');
+      tile.append(card, link('View matching stationery', '/demo/' + key + '?stationery=1', 'stationery-sample-link'));
+      cards.append(tile);
     }
     section.append(el('h2', category === 'Weddings' ? 'Wedding collection' : category), cards);
     gallery.append(section);
@@ -451,8 +462,10 @@ async function organiserView() {
   const query = new URLSearchParams(location.search);
   const id = query.get('event');
   const preview = query.get('preview');
+  const suite = query.get('stationery');
   const template = query.get('new');
   if (preview) await guestView(preview, true);
+  else if (suite) await stationeryWorkspace(suite);
   else if (id) await editor(id);
   else if (template && Object.hasOwn(designs, template)) await editor(null, template);
   else if (query.has('new')) templatePicker();
@@ -470,6 +483,7 @@ async function editor(id, template = 'wedding') {
   shortcuts.append(link('Live preview', '#live-preview', 'button secondary mobile-preview-link'));
   if (id) {
     shortcuts.append(link('Preview invitation', '/editor?preview=' + encodeURIComponent(id), 'button secondary'));
+    shortcuts.append(link('Matching stationery', '/editor?stationery=' + encodeURIComponent(id), 'button'));
     if (selected.canShare) shortcuts.append(link('Guest links and replies', '#replies', 'button secondary'));
   } else shortcuts.append(link('Choose another template', '/editor?new=1', 'button secondary'));
   heading.append(shortcuts);
@@ -530,6 +544,7 @@ async function editor(id, template = 'wedding') {
       : (selected?.hasPhoto && !photoRemoved ? '/api/events/' + id + '/photo' : '');
     const event = Object.fromEntries(new FormData(form));
     event.title ||= 'Invitation title';
+    if (event.template === selected?.template) event.stationeryColours = selected.stationeryColours;
     preview.replaceChildren(invitationCard(event, photo, {heading: 'h3'}));
     remove.hidden = !photo;
   }
@@ -585,6 +600,7 @@ async function editor(id, template = 'wedding') {
   const layout = el('div', undefined, 'editor-layout');
   layout.append(section, aside);
   work.append(layout);
+  if (!id) work.append(el('p', 'Save your invitation to personalise the matching stationery.', 'muted'));
   if (selected?.canShare) work.append(households(selected));
   app.replaceChildren(organiserHeader(), work);
 }
@@ -732,7 +748,11 @@ async function guestView(token, preview = false) {
     }, duration);
   }
   opener.addEventListener('click', open);
-  if (guest.demo) page.append(header('All demos', '/'));
+  if (guest.demo) {
+    const top = header('All demos', '/');
+    top.append(link('Matching stationery', '/demo/' + token + '?stationery=1', 'nav-link'));
+    page.append(top);
+  }
   if (preview) page.append(header('Back to editor', invitationUrl(token)));
   page.append(shell, card);
   app.replaceChildren(page);
@@ -743,6 +763,7 @@ function invitationCard(event, photo, {heading = 'h1', token, guest} = {}) {
   const design = designs[template];
   const card = el('article', undefined, 'invite-card ' + template + (design.suite ? ' suite-card' : ''));
   applyPalette(card, event.colour);
+  applyStationeryColours(card, event.stationeryColours);
   const details = el('div', undefined, 'invite-details');
   if (design.suite) {
     card.append(stationery(event, photo, heading));
@@ -858,7 +879,9 @@ function replyForm(token, guest) {
 async function start() {
   try {
     const path = location.pathname;
-    if (path.startsWith('/demo/') || path.startsWith('/invite/')) {
+    if (path.startsWith('/demo/') && new URLSearchParams(location.search).has('stationery')) {
+      await stationeryDemo(path.split('/')[2]);
+    } else if (path.startsWith('/demo/') || path.startsWith('/invite/')) {
       await guestView(path.split('/')[2]);
     } else if (path.startsWith('/account/')) {
       accountPage(path);

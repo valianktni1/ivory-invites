@@ -63,6 +63,12 @@ Use **Change access** to upgrade a Trial account. Their drafts are already in th
 
 If the sign-up email does not arrive, check your junk folder and run `docker compose logs --tail=50 invites` for mail delivery errors. Each generated household link can be opened and used to RSVP by whoever holds the link. Send each link to the intended household. Demo replies are discarded. Payment, the wedding planner connection and the occasion landing pages are separate milestones.
 
+## Matching stationery
+
+Open **Matching stationery** from a saved invitation. Each design has three palettes and nine pieces: save the date, day invitation, evening invitation, welcome sign, menu, place cards, table names or numbers, seating chart and thank-you card. Each piece saves its own wording and paper size. The palette is shared across the set. Set the evening arrival time separately.
+
+Accounts with full access can download print-size PDFs and PNGs for sharing. Individual PDFs can include 3 mm bleed. Multiple place cards print on A4 cutting sheets. Save one guest or table name per line for batches, and leave a blank line between tables on a seating chart. The photo position and zoom are set per piece. The stationery uses the invitation's uploaded photograph and is included in the same SQLite backup.
+
 To back up, stop the app with `docker compose stop`, copy `/mnt/photographers_data/invites-ivoryclient` to your backup location, then run `docker compose start`. Uploaded photos are inside the same database. The database and data directory should have the same permissions after a restore.
 
 ## Run locally for development
@@ -70,6 +76,7 @@ To back up, stop the app with `docker compose stop`, copy `/mnt/photographers_da
 Use Python 3.11 or newer with the system's time-zone database installed.
 
 ```sh
+python3 -m pip install -r requirements.txt
 python3 app.py
 ```
 

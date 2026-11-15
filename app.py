@@ -10,6 +10,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import date, datetime
+from functools import lru_cache
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 import accounts
 import mail_settings
+import stationery
 
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("INVITES_DATA", ROOT / "data"))
@@ -68,6 +70,7 @@ TEMPLATES = {
 }
 DEMO_KEYS = "|".join(re.escape(key) for key in TEMPLATES)
 STATIC_TYPES = {"app.css": "text/css; charset=utf-8", "app.js": "text/javascript; charset=utf-8",
+                "stationery.js": "text/javascript; charset=utf-8",
                 **{f"{key}.webp": "image/webp" for key in ("wedding", "birthday", "botanical", "something-blue", "silver")},
                 "cormorantgaramond.woff2": "font/woff2", "dmsans.woff2": "font/woff2"}
 HOST_PAGES = {"/", "/editor", "/admin", "/admin/mail", "/admin/mail-setup",
@@ -106,6 +109,11 @@ def setup():
                 label TEXT NOT NULL, names TEXT NOT NULL, reply TEXT, replied_at TEXT
             );
             CREATE INDEX IF NOT EXISTS households_by_event ON households(event_id);
+            CREATE TABLE IF NOT EXISTS stationery_suites (
+                event_id TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+                palette TEXT NOT NULL,
+                drafts TEXT NOT NULL
+            );
         """)
         accounts.migrate(connection)
 
@@ -189,7 +197,8 @@ def guest_details(connection, token):
                     label="Sam & Jamie" if token in {"birthday", "disco"} else "The Smith family",
                     names=["Sam", "Jamie"], answered=False)
     row = guest_row(connection, token)
-    return dict(event=json.loads(row["details"]), demo=False, label=row["label"],
+    return dict(event=event_with_stationery_palette(connection, row["event_id"], row["details"]),
+                demo=False, label=row["label"],
                 names=json.loads(row["names"]), answered=row["reply"] is not None,
                 photo=f"/photo/{token}" if row["has_photo"] else "")
 
@@ -197,6 +206,29 @@ def guest_details(connection, token):
 def household_details(row):
     return dict(token=row["token"], label=row["label"], names=json.loads(row["names"]),
                 reply=json.loads(row["reply"]) if row["reply"] else None)
+
+
+def stationery_state(connection, event_id, event):
+    row = connection.execute("SELECT palette, drafts FROM stationery_suites WHERE event_id = ?",
+                             (event_id,)).fetchone()
+    palettes = stationery.PALETTES[event["template"]]
+    palette = row["palette"] if row and row["palette"] in palettes else next(iter(palettes))
+    return palette, json.loads(row["drafts"]) if row else {}
+
+
+def event_with_stationery_palette(connection, event_id, details):
+    event = json.loads(details)
+    row = connection.execute("SELECT palette FROM stationery_suites WHERE event_id = ?", (event_id,)).fetchone()
+    if row and row["palette"] in stationery.PALETTES[event["template"]]:
+        event["stationeryColours"] = stationery.PALETTES[event["template"]][row["palette"]]
+    return event
+
+
+@lru_cache(maxsize=36)
+def stationery_demo(token, kind, palette_index):
+    event = dict(TEMPLATES[token], template=token)
+    palette = list(stationery.PALETTES[token])[palette_index]
+    return stationery.render(event, kind, stationery.example(event, kind), palette, "preview", sample=True)
 
 
 def save_reply(connection, token, data):
@@ -360,6 +392,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.read_route(path)
         except (ClientError, accounts.AccountError, mail_settings.MailSettingsError) as error:
             self.json({"error": error.message}, error.status)
+        except stationery.StationeryError as error:
+            self.json({"error": str(error)}, 400)
         except (BrokenPipeError, ConnectionResetError):
             return
 
@@ -407,8 +441,35 @@ class Handler(BaseHTTPRequestHandler):
                     result = dict(signedIn=False, ownerSetup=owner is None)
             self.json(result)
             return
+        demo = re.fullmatch(fr"/api/stationery/demo/({DEMO_KEYS})(?:/([a-z-]+)/([0-2]))?", path)
+        if demo:
+            token, kind, palette_index = demo.groups()
+            if kind is None:
+                self.json(stationery.metadata(dict(TEMPLATES[token], template=token), {}, None))
+            else:
+                stationery.choice(kind, stationery.KINDS, "Choose a stationery item.")
+                self.send(stationery_demo(token, kind, int(palette_index)), "image/png")
+            return
         with db() as connection:
             account_id = self.require_host(connection)
+            stationery_request = re.fullmatch(fr"/api/stationery/({TOKEN})", path)
+            if stationery_request:
+                event_id = stationery_request[1]
+                row = event_row(connection, event_id, account_id)
+                event = json.loads(row["details"])
+                palette, drafts = stationery_state(connection, event_id, event)
+                result = stationery.metadata(event, drafts, palette)
+                result["hasPhoto"] = row["photo"] is not None
+                result["canDownload"] = accounts.profile(connection, account_id)["access"] != "trial"
+                if result["canDownload"]:
+                    replies = connection.execute("SELECT reply FROM households WHERE event_id = ? AND reply IS NOT NULL",
+                                                 (event_id,))
+                    result["attending"] = "\n".join(
+                        person["name"] for response in replies for person in json.loads(response["reply"])["people"]
+                        if person["status"] == "yes"
+                    )
+                self.json(result)
+                return
             if path == "/api/admin/customers":
                 self.require_admin(connection, account_id)
                 self.json(accounts.customers(connection))
@@ -434,7 +495,7 @@ class Handler(BaseHTTPRequestHandler):
                 can_share = accounts.profile(connection, account_id)["access"] != "trial"
                 rows = connection.execute("SELECT * FROM households WHERE event_id = ? ORDER BY rowid",
                                           (event_id,)) if can_share else ()
-                self.json(dict(id=event_id, **json.loads(event["details"]),
+                self.json(dict(id=event_id, **event_with_stationery_palette(connection, event_id, event["details"]),
                                hasPhoto=event["photo"] is not None,
                                canShare=can_share,
                                households=[household_details(row) for row in rows]))
@@ -452,7 +513,43 @@ class Handler(BaseHTTPRequestHandler):
         if accounts.profile(connection, account_id)["email"] != accounts.OWNER_EMAIL:
             raise ClientError("Administrator access is required.", 403)
 
+    def stationery_action(self, event_id, kind, action, data):
+        stationery.choice(kind, stationery.KINDS, "Choose a stationery item.")
+        draft = stationery.validate_draft(kind, data.get("draft"))
+        with db() as connection:
+            account_id = self.require_host(connection)
+            if action == "save":
+                connection.execute("BEGIN IMMEDIATE")
+            row = event_row(connection, event_id, account_id)
+            event = json.loads(row["details"])
+            palette = stationery.choice(data.get("palette"), stationery.PALETTES[event["template"]],
+                                        "Choose a colour palette for this design.")
+            if action == "save":
+                _, drafts = stationery_state(connection, event_id, event)
+                drafts[kind] = draft
+                connection.execute("""
+                    INSERT INTO stationery_suites (event_id, palette, drafts) VALUES (?, ?, ?)
+                    ON CONFLICT(event_id) DO UPDATE SET palette=excluded.palette, drafts=excluded.drafts
+                    """, (event_id, palette, json.dumps(drafts)))
+            if action in {"pdf", "png"} and accounts.profile(connection, account_id)["access"] == "trial":
+                raise ClientError("Stationery downloads are available with full access.", 403)
+            photo = row["photo"]
+        if action == "save":
+            self.json({"ok": True})
+        else:
+            body = stationery.render(event, kind, draft, palette, action, photo,
+                                      bleed=3 if data.get("bleed") is True else 0)
+            mime = "application/pdf" if action == "pdf" else "image/png"
+            headers = [] if action == "preview" else [
+                ("Content-Disposition", f'attachment; filename="ivory-{kind}.{action}"')
+            ]
+            self.send(body, mime, headers=headers)
+
     def write_route(self, path, data):
+        stationery_request = re.fullmatch(fr"/api/stationery/({TOKEN})/([a-z-]+)/(save|preview|pdf|png)", path)
+        if stationery_request:
+            self.stationery_action(*stationery_request.groups(), data)
+            return
         if path in {"/api/login", "/api/account/signup", "/api/account/setup",
                     "/api/account/forgot", "/api/account/reset"}:
             self.account_route(path, data)

@@ -1,7 +1,9 @@
 FROM python:3.12-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PORT=8080 INVITES_DATA=/data
 WORKDIR /app
-COPY app.py accounts.py mail_settings.py ./
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app.py accounts.py mail_settings.py stationery.py ./
 COPY static ./static
 USER 10001:10001
 EXPOSE 8080
